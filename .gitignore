@@ -1,0 +1,47 @@
+# Локальное окружение, секреты и данные не входят в репозиторий.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+.npmrc
+.DS_Store
+._*
+.claude/
+.scratch/
+_versions/
+node_modules
+.next
+next-env.d.ts
+*.tsbuildinfo
+coverage/
+playwright-report/
+test-results/
+*.log
+runtime/
+uploads/
+backups/
+*.dump
+*.sqlite*
+*.db
+*.tar
+*.tar.gz
+*.zip
+
+# Исторические QA-материалы остаются локально; в Git — поддерживаемая документация.
+docs/*
+!docs/README.md
+!docs/DEVELOPMENT.md
+!docs/RELEASE-CHECKLIST.md
+!docs/architecture.md
+!docs/agents/
+!docs/deployment/
+docs/deployment/*
+!docs/deployment/nginx.conf.example
+!docs/deployment/slot-design-lms.service.example
+
+# Личные вспомогательные скрипты настройки существующего окружения.
+scripts/set-db-password.py
+scripts/set-smtp.py

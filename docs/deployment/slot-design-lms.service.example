@@ -1,0 +1,25 @@
+# Шаблон. Пользователь lms, пути и файл окружения должны быть созданы отдельно.
+[Unit]
+Description=Slot Design LMS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lms
+Group=lms
+WorkingDirectory=/opt/slot-design-lms
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/slot-design-lms/env
+ExecStart=/usr/bin/node /opt/slot-design-lms/scripts/next.mjs start --hostname 127.0.0.1 --port 8787
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/slot-design-lms/.next /var/lib/slot-design-lms
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
