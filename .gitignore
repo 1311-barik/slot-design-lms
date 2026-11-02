@@ -35,12 +35,14 @@ docs/*
 !docs/README.md
 !docs/DEVELOPMENT.md
 !docs/RELEASE-CHECKLIST.md
+!docs/DEPLOYMENT.md
 !docs/architecture.md
 !docs/agents/
 !docs/deployment/
 docs/deployment/*
 !docs/deployment/nginx.conf.example
 !docs/deployment/slot-design-lms.service.example
+!docs/deployment/slot-design-lms-mail.service.example
 
 # Личные вспомогательные скрипты настройки существующего окружения.
 scripts/set-db-password.py

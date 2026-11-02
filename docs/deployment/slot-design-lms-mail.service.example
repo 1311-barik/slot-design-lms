@@ -1,0 +1,26 @@
+[Unit]
+Description=Slot Design LMS mail worker
+After=network-online.target
+Wants=network-online.target
+# Создать маркер только после проверки SMTP, очереди и контрольного письма.
+ConditionPathExists=/etc/slot-design-lms/mail-enabled
+
+[Service]
+Type=simple
+User=lms
+Group=lms
+WorkingDirectory=/opt/slot-design-lms/current
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/slot-design-lms/env
+ExecStart=/opt/slot-design-node-v24.15.0/bin/node --import tsx scripts/mail-worker.ts
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/slot-design-lms
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

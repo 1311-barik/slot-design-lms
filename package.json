@@ -21,10 +21,10 @@
     "@supabase/ssr": "0.12.7",
     "@supabase/supabase-js": "2.118.0",
     "postgres": "3.4.7",
-    "zod": "4.3.6",
-    "fflate": "0.8.2",
+    "zod": "4.6.6",
+    "fflate": "0.8.3",
     "sharp": "0.35.5",
-    "nodemailer": "10.1.1"
+    "nodemailer": "10.1.4"
   },
   "devDependencies": {
     "typescript": "5.9.3",

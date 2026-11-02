@@ -8,17 +8,19 @@ Wants=network-online.target
 Type=simple
 User=lms
 Group=lms
-WorkingDirectory=/opt/slot-design-lms
+WorkingDirectory=/opt/slot-design-lms/current
 Environment=NODE_ENV=production
+Environment=NEXT_TELEMETRY_DISABLED=1
 EnvironmentFile=/etc/slot-design-lms/env
-ExecStart=/usr/bin/node /opt/slot-design-lms/scripts/next.mjs start --hostname 127.0.0.1 --port 8787
+# Node 24 установлен отдельно от системного Node других приложений.
+ExecStart=/opt/slot-design-node-v24.15.0/bin/node scripts/next.mjs start --hostname 127.0.0.1 --port 8787
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/opt/slot-design-lms/.next /var/lib/slot-design-lms
+ReadWritePaths=/opt/slot-design-lms/current/.next/cache /var/lib/slot-design-lms
 UMask=0077
 
 [Install]
