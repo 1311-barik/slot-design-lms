@@ -53,7 +53,7 @@ export async function readWorkspace(actor: string) {
     for (const work of works) if (work.owner_id === actor && !visibleAssignments.some(a => a.id === work.assignment_id)) {
       visibleAssignments.push({ id: work.assignment_id, module: work.module, spec: work.spec, revision: work.assignment_revision, published: false, due_at: null, late_policy: null });
     }
-    return jsonValue({ me, assignments: visibleAssignments.sort((a,b) => a.module-b.module || String(a.spec.title).localeCompare(b.spec.title)), works, drafts, submissions, reviews, reviewDrafts, files, people: visiblePeople, claims, presentations, reviewers, notifications, feedback, mail: admin ? { provider: mailProvider()?.name || null } : null, project: projects.find(p => p.owner_id === actor) || null, projects: admin ? projects : [], packageItems, questions, answers, materials: visibleMaterials, materialFiles, progress, sessions: visibleSessions, now: clock.now });
+    return jsonValue({ me, assignments: visibleAssignments.sort((a,b) => a.module-b.module || String(a.spec.title).localeCompare(b.spec.title)), works, drafts, submissions, reviews, reviewDrafts, files, people: visiblePeople, claims, presentations, reviewers, notifications: admin ? notifications : notifications.filter(n => !['enrollment.invited','auth.link_requested'].includes(n.kind)), feedback, mail: admin ? { provider: mailProvider()?.name || null } : null, project: projects.find(p => p.owner_id === actor) || null, projects: admin ? projects : [], packageItems, questions, answers, materials: visibleMaterials, materialFiles, progress, sessions: visibleSessions, now: clock.now });
   });
 }
 

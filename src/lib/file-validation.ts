@@ -25,7 +25,32 @@ export function inspectFile(name: string, bytes: Buffer) {
       if (bytes.includes(0)) throw invalid();
       mime = ext === 'csv' ? 'text/csv' : 'text/plain'; break;
     }
+    case 'vtt': {
+      let content: string;
+      try { content = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { throw new AppError('file_encoding', 'Subtitle files must use UTF-8.'); }
+      if (bytes.includes(0) || !/^\uFEFF?WEBVTT(?:\r?\n|[ \t])/.test(content)) throw invalid();
+      mime = 'text/vtt'; break;
+    }
     case 'pdf': if (!bytes.subarray(0,5).equals(Buffer.from('%PDF-'))) throw invalid(); mime = 'application/pdf'; break;
+    case 'mp4': {
+      // ISO BMFF: проверяем контейнер, границы атомов и наличие данных с метаданными.
+      if (bytes.length < 16 || bytes.subarray(4,8).toString() !== 'ftyp') throw invalid();
+      const brand = bytes.subarray(8,12).toString('ascii');
+      if (!['isom','iso2','mp41','mp42','avc1','M4V '].includes(brand)) throw invalid();
+      let offset = 0; const found = new Set<string>();
+      while (offset + 8 <= bytes.length) {
+        let size = bytes.readUInt32BE(offset);
+        const type = bytes.subarray(offset + 4, offset + 8).toString('ascii');
+        let header = 8;
+        if (size === 1) { if (offset + 16 > bytes.length) throw invalid(); size = Number(bytes.readBigUInt64BE(offset + 8)); header = 16; }
+        if (size === 0) size = bytes.length - offset;
+        if (offset === 0 && size < 16) throw invalid();
+        if (!Number.isSafeInteger(size) || size < header || offset + size > bytes.length) throw invalid();
+        found.add(type); offset += size;
+      }
+      if (offset !== bytes.length || !found.has('moov') || !found.has('mdat')) throw invalid();
+      mime = 'video/mp4'; break;
+    }
     case 'png': if (bytes.length < 24 || bytes.subarray(0,8).toString('hex') !== '89504e470d0a1a0a' || bytes.subarray(12,16).toString() !== 'IHDR') throw invalid(); mime = 'image/png'; break;
     case 'jpg': case 'jpeg': if (bytes.length < 4 || bytes[0] !== 255 || bytes[1] !== 216 || bytes[bytes.length - 2] !== 255 || bytes[bytes.length - 1] !== 217) throw invalid(); mime = 'image/jpeg'; break;
     case 'webp': if (bytes.length < 16 || bytes.subarray(0,4).toString() !== 'RIFF' || bytes.subarray(8,12).toString() !== 'WEBP' || bytes.readUInt32LE(4) + 8 !== bytes.length) throw invalid(); mime = 'image/webp'; break;
@@ -45,7 +70,7 @@ export function inspectFile(name: string, bytes: Buffer) {
       mime = `application/vnd.openxmlformats-officedocument.${ext === 'docx' ? 'wordprocessingml.document' : ext === 'pptx' ? 'presentationml.presentation' : 'spreadsheetml.sheet'}`;
       break;
     }
-    default: throw new AppError('unsupported_file', 'Use PDF, DOCX, PPTX, XLSX, CSV, TXT, MD, PNG, JPEG or WebP.');
+    default: throw new AppError('unsupported_file', 'Use PDF, DOCX, PPTX, XLSX, CSV, TXT, MD, PNG, JPEG, WebP, MP4 or VTT.');
   }
   return { mime, size: bytes.length };
 }

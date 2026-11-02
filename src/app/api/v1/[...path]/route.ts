@@ -6,11 +6,20 @@ import { runMail } from '@/lib/mail';
 import { ensureAuthUser } from '@/lib/supabase-admin';
 import { AppError } from '@/lib/contract';
 import { config } from '@/lib/config';
-import { downloadFile, uploadFile } from '@/lib/files';
+import { downloadFile, playVideo, uploadFile } from '@/lib/files';
+import { sql } from '@/lib/db';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 type Context = { params: Promise<{ path: string[] }> };
 const response = (value: unknown, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
+async function setupState(user: string) {
+  const [profile] = await sql`select id,name,email,role,password_set_at,activated_at,revoked_at,access_ends_at from lms.profiles where id=${user}`;
+  if (!profile || !profile.activated_at || profile.revoked_at || new Date(profile.access_ends_at) <= new Date()) throw new AppError('access_expired', 'Course access is not active. Contact the administrator.', 403);
+  return profile as { role: string; password_set_at: Date | null; [key: string]: unknown };
+}
+const requireSetupDone = (profile: { role: string; password_set_at: Date | null }) => {
+  if (profile.role === 'participant' && !profile.password_set_at) throw new AppError('password_required', 'Create your password to open the course.', 403);
+};
 async function limitedBody(request: Request, limit: number) {
   const reader = request.body?.getReader(); let size = 0; const chunks: Uint8Array[] = [];
   if (!reader) return Buffer.alloc(0);
@@ -32,7 +41,40 @@ async function handle(request: Request, context: Context) {
   if (request.method === 'GET') {
     if (path === 'config') return response({ local: cfg.mode === 'local' });
     const user = await actor();
-    if (path === 'workspace') return response(await readWorkspace(user));
+    const profile = await setupState(user);
+    if (path === 'workspace') return response(profile.role === 'participant' && !profile.password_set_at ? { me: profile } : await readWorkspace(user));
+    requireSetupDone(profile);
+    if (/^files\/[\da-f-]+\/captions$/.test(path)) {
+      const { file, bytes } = await downloadFile(user, path.split('/')[1]);
+      if (file.mime !== 'text/vtt') throw new AppError('not_found', 'These captions are not available.', 404);
+      return new Response(new Uint8Array(bytes), { headers: { 'Content-Type': 'text/vtt; charset=utf-8', 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
+    }
+    if (/^files\/[\da-f-]+\/play$/.test(path)) {
+      const video = await playVideo(user, path.split('/')[1]);
+      const range = request.headers.get('range');
+      if (range && !/^bytes=(\d+-\d*|\d*-\d+)$/.test(range)) throw new AppError('invalid_range', 'This video range is not available.', 416);
+      const headers = new Headers({ 'Content-Type': 'video/mp4', 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
+      if (video.url) {
+        let upstream: Response;
+        try { upstream = await fetch(video.url, { headers: range ? { Range: range } : {}, redirect: 'error', signal: AbortSignal.timeout(300_000) }); }
+        catch { throw new AppError('video_unavailable', 'The video is temporarily unavailable. Try again.', 503); }
+        if (![200,206,416].includes(upstream.status)) throw new AppError('video_unavailable', 'The video is temporarily unavailable. Try again.', 503);
+        for (const name of ['content-length','content-range']) { const value = upstream.headers.get(name); if (value) headers.set(name, value); }
+        return new Response(upstream.body, { status: upstream.status, headers });
+      }
+      const bytes = video.bytes!;
+      if (!range) { headers.set('Content-Length', String(bytes.length)); return new Response(new Uint8Array(bytes), { headers }); }
+      const [, first, last] = /^bytes=(\d*)-(\d*)$/.exec(range)!;
+      const start = first ? Number(first) : Math.max(0, bytes.length - Number(last));
+      const end = first && last ? Math.min(Number(last), bytes.length - 1) : bytes.length - 1;
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start >= bytes.length || start > end) {
+        headers.set('Content-Range', `bytes */${bytes.length}`);
+        return new Response(null, { status: 416, headers });
+      }
+      headers.set('Content-Range', `bytes ${start}-${end}/${bytes.length}`);
+      headers.set('Content-Length', String(end - start + 1));
+      return new Response(new Uint8Array(bytes.subarray(start, end + 1)), { status: 206, headers });
+    }
     if (/^files\/[\da-f-]+\/download$/.test(path)) {
       const { file, bytes } = await downloadFile(user, path.split('/')[1]);
       return new Response(new Uint8Array(bytes), { headers: { 'Content-Type': file.mime, 'Content-Disposition': `attachment; filename="download"; filename*=UTF-8''${encodeURIComponent(file.name).replace(/'/g, '%27')}`, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
@@ -40,6 +82,7 @@ async function handle(request: Request, context: Context) {
   } else if (request.method === 'POST') {
     if (path === 'uploads') {
       const user = await actor();
+      requireSetupDone(await setupState(user));
       await rateLimit(`upload:${user}`, 50);
       const bytes = await limitedBody(request, 50_100_000);
       let form: FormData;
@@ -73,6 +116,7 @@ async function handle(request: Request, context: Context) {
       await setPassword(user, z.object({ password: z.string().max(200) }).strict().parse(data).password); return response({ ok: true });
     }
     const user = await actor();
+    requireSetupDone(await setupState(user));
     if (path === 'commands') {
       const payload = z.object({ action: z.string(), input: z.unknown() }).strict().parse(data);
       // Локальная кнопка «обработать почту сейчас» для демонстрации; в рабочей среде письма отправляет фоновый обработчик.

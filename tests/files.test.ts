@@ -8,4 +8,5 @@ test('reject disguised files, empty files and Office macros', () => {
   assert.throws(() => inspectFile('macro.docx', Buffer.from(zipSync({ '[Content_Types].xml': strToU8('macroEnabled'), 'word/vbaProject.bin': strToU8('macro') }))), /macros/);
   assert.equal(inspectFile('notes.txt', Buffer.from('My analysis')).mime, 'text/plain');
   assert.throws(() => inspectFile('notes.txt', Buffer.from([0xff,0xfe])), /UTF-8/);
+  assert.throws(() => inspectFile('fake.mp4', Buffer.from('<html>not a video</html>')), /format/);
 });

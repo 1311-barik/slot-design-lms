@@ -16,6 +16,10 @@ export async function uploadFile(actor: string, name: string, bytes: Buffer) {
   let stored = false;
   try {
     return await transaction(actor, async tx => {
+      if (meta.mime === 'video/mp4' || meta.mime === 'text/vtt') {
+        const [permission] = await tx`select lms.is_admin() as allowed`;
+        if (!permission.allowed) throw new AppError('forbidden', 'Only administrators can upload course videos.', 403);
+      }
       if (cfg.mode === 'local') {
         await mkdir(join(cfg.runtime, 'files'), { recursive: true, mode: 0o700 });
         await writeFile(path, bytes, { flag: 'wx', mode: 0o600 });
@@ -34,6 +38,22 @@ export async function uploadFile(actor: string, name: string, bytes: Buffer) {
     }
     throw error;
   }
+}
+export async function playVideo(actor: string, id: string) {
+  uuid.parse(id);
+  const file = await transaction(actor, async tx => {
+    const [row] = await tx`select * from lms.files where id=${id} and mime='video/mp4'`;
+    if (!row) throw new AppError('not_found', 'This video is not available.', 404);
+    // Владелец загруженного, но ещё не опубликованного файла не должен обходить публикацию.
+    const [access] = await tx`select lms.is_admin() or lms.can_read_file(${id}) as allowed`;
+    if (!access.allowed) throw new AppError('not_found', 'This video is not available.', 404);
+    return row;
+  });
+  if (config().mode === 'local') return { file, bytes: await readFile(join(config().runtime, 'files', id)), url: null };
+  // Подпись живёт только внутри сервера: браузер получает поток через endpoint с проверкой RLS.
+  const { data, error } = await storage().createSignedUrl(id, 60);
+  if (error || !data?.signedUrl) throw new AppError('video_unavailable', 'The video is temporarily unavailable. Try again.', 503);
+  return { file, bytes: null, url: data.signedUrl };
 }
 export async function downloadFile(actor: string, id: string) {
   uuid.parse(id);

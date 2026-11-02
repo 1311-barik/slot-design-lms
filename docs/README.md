@@ -8,6 +8,7 @@
 - [Разработка, запуск и проверка](DEVELOPMENT.md).
 - [Архитектура](architecture.md).
 - [Размещение на Hetzner, почта и восстановление](DEPLOYMENT.md).
+- [Первый вход участника и образец приветственного письма](ONBOARDING.md).
 - [Что нужно до запуска участников](RELEASE-CHECKLIST.md).
 - [Предметная модель](agents/domain.md), [правила интерфейса](agents/usability.md), [учёт работы](agents/issue-tracker.md).
 - Шаблоны [nginx](deployment/nginx.conf.example) и [сервиса приложения](deployment/slot-design-lms.service.example) — используются по SERVER-SETUP. Адреса и окружение задаются получателем.

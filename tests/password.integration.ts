@@ -23,6 +23,8 @@ const email = 'sam@example.test';
 const jar = await signInByLink(email);
 const before = await call('workspace', undefined, jar);
 assert.equal(before.status, 200);
+assert.equal(before.body.materials, undefined, 'course content is hidden until a password is created');
+assert.equal((await call('commands', { action: 'project.save', input: { expectedRevision: 0, theme: 'Too early', audience: 'Adults' } }, jar)).status, 403, 'course commands are blocked before password setup');
 for (const [password, reason] of [['short7!', 'under 8'], ['        ', 'only spaces'], ['я'.repeat(37), 'over 72 bytes']] as const) {
   const r = await call('auth/password', { password }, jar);
   assert.equal(r.status, 422, `rejects ${reason}`);
@@ -33,6 +35,7 @@ const password = `Concept phrase ${Date.now()}`;
 assert.equal((await call('auth/password', { password }, jar)).status, 200);
 const after = await call('workspace', undefined, jar);
 assert.ok(after.body.me.password_set_at, 'password_set_at is recorded');
+assert.ok(Array.isArray(after.body.materials), 'course content opens after password setup');
 await call('auth/logout', {}, jar);
 
 const wrong = await call('auth/password-login', { email, password: 'wrong password!' });

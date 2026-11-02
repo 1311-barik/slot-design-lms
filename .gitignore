@@ -41,6 +41,7 @@ docs/*
 !docs/SERVER-SETUP.md
 !docs/BACKUP-RESTORE.md
 !docs/architecture.md
+!docs/ONBOARDING.md
 !docs/agents/
 !docs/deployment/
 docs/deployment/*

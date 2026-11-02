@@ -4,6 +4,8 @@ import nodemailer from 'nodemailer';
 import { sql } from './db';
 import { config } from './config';
 import { modules } from './course';
+import { serviceClient } from './supabase-admin';
+import { requestLink } from './auth';
 
 // LMS-11 и §6 технического проекта. Обработчик работает под служебным подключением (вне RLS):
 // планирует письма из outbox и расписания, затем доставляет их с повторной проверкой прав и актуальности.
@@ -82,7 +84,7 @@ async function fromOutbox(event: Row, crowd: Awaited<ReturnType<typeof people>>)
       // Поздно приглашённый получает ближайшие события в приглашении, без пачки пропущенных напоминаний.
       const [next] = await sql`select * from lms.sessions where starts_at>now() order by starts_at limit 1`;
       const closing = new Date(owner.access_ends_at).getTime() - Date.now() < 7 * DAY;
-      return [{ key: key(owner), kind: event.kind, recipient: owner, link: '/?module=0', subject: 'Welcome to Slot Design — how to start', body: `${greet(owner)}Welcome to Slot Design. Your course access is ready.\n\nHow to start:\n1. Open ${config().origin}, enter this email address and press “Email me a sign-in link”.\n2. Open the link from the new email in the same browser and press “Continue to course”.\n3. Create your password. Next time, sign in with your email and password.\n4. Start with Module 0: watch the welcome video from the course author and note the theme of the slot you want to build.${next ? `\n\nFirst live session: ${next.title}, ${when(next.starts_at, owner.timezone)}. You will get reminders 24 hours and 1 hour before each session, and 24 hours before each homework deadline if you have not submitted yet.` : ''}\n\nYour access ends on ${when(owner.access_ends_at, owner.timezone)}.${closing ? ' That is less than seven days from now.' : ''}` }];
+      return [{ key: key(owner), kind: event.kind, recipient: owner, link: '/?module=0', subject: 'Welcome to Slot Design — your course access', body: `${greet(owner)}Welcome to Slot Design. Your course access is ready.\n\nOpen your personal sign-in link:\n{{SIGN_IN_LINK}}\n\nChoose “Continue to course”, create your password, and Module 0 will open with seven introductory videos and English subtitles. Next time, sign in with your email and password.\n\nThe link is for you only, works once, and expires soon. If it has expired, request a new link on the LMS sign-in page.${next ? `\n\nFirst live session: ${next.title}, ${when(next.starts_at, owner.timezone)}. You will get reminders 24 hours and 1 hour before each session, and 24 hours before each homework deadline if you have not submitted yet.` : ''}\n\nYour access ends on ${when(owner.access_ends_at, owner.timezone)}.${closing ? ' That is less than seven days from now.' : ''}` }];
     }
     case 'session.changed': {
       const [x] = await sql`select * from lms.sessions where id=${event.payload.sessionId}`; if (!x) return [];
@@ -211,6 +213,19 @@ export function mailProvider(): Provider | null {
   return null;
 }
 
+// Одноразовая ссылка создаётся непосредственно перед отправкой: в БД и журналах её нет.
+async function welcomeLink(email: string) {
+  if (config().mode === 'local') {
+    const result = await requestLink(email);
+    if (!('localLink' in result)) throw new Error('Local invitation link is unavailable.');
+    return result.localLink;
+  }
+  const { data, error } = await serviceClient().auth.admin.generateLink({ type: 'magiclink', email });
+  const token = data?.properties?.hashed_token;
+  if (error || !token) throw new Error('Invitation link could not be generated.');
+  return `${config().origin}/?token=${encodeURIComponent(token)}`;
+}
+
 export async function deliver(now = new Date(), provider = mailProvider()) {
   if (!provider) return { processed: 0, sent: 0, failed: 0, skipped: 'Mail provider is not configured.' };
   // Строки, зависшие в sending (процесс упал после передачи), не повторяются вслепую.
@@ -222,7 +237,22 @@ export async function deliver(now = new Date(), provider = mailProvider()) {
     const invalid = await stillValid(n, now);
     if (invalid) { await sql`update lms.notifications set status='cancelled',last_error=${invalid} where id=${n.id}`; continue; }
     const [who] = await sql`select name,email from lms.profiles where id=${n.recipient_id}`;
-    const result = await provider.send({ id: n.id, to: who.email, name: who.name, subject: n.subject, text: n.body });
+    let result: Outcome;
+    let body = n.body;
+    try {
+      body = ['enrollment.invited', 'auth.link_requested'].includes(n.kind)
+        ? n.body.replace('{{SIGN_IN_LINK}}', await welcomeLink(who.email))
+        : n.body;
+      if (['enrollment.invited', 'auth.link_requested'].includes(n.kind) && body === n.body) throw new Error('Sign-in template has no link placeholder.');
+    } catch {
+      result = { ok: false, retry: true, error: 'Invitation link could not be prepared. Check Supabase Auth.' };
+      failed++;
+      const delay = RETRIES[n.attempts - 1];
+      await sql`update lms.notifications set status=${delay ? 'pending' : 'failed'},last_error=${result.error},next_attempt_at=${new Date(now.getTime() + (delay || 0) * MINUTE)} where id=${n.id}`;
+      continue;
+    }
+    try { result = await provider.send({ id: n.id, to: who.email, name: who.name, subject: n.subject, text: body }); }
+    catch { result = { ok: false, retry: false, unknown: true, error: 'The mail provider returned no result. Check delivery before retrying.' }; }
     if (result.ok) { sent++; await sql`update lms.notifications set status='sent',sent_at=clock_timestamp(),provider_id=${result.providerId},last_error=null where id=${n.id}`; continue; }
     failed++;
     const delay = RETRIES[n.attempts - 1];

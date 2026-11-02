@@ -26,6 +26,36 @@ async function drain(now: Date, provider: Provider) {
 }
 const byKey = async (like: string) => sql`select * from lms.notifications where dedupe_key like ${like} order by created_at`;
 
+test('welcome email contains the recipient’s one-time link and no token is stored in the mail queue', async () => {
+  const id = randomUUID(); const address = `${id}@example.test`;
+  await command(admin, 'enrollment.invite', { id, name: 'New Student', email: address, accessEndsAt: new Date(Date.now() + 30 * 86_400_000).toISOString() });
+  const mail = fake();
+  await drain(new Date(), mail.provider);
+  const welcome = mail.sent.find(m => m.to === address && m.subject.startsWith('Welcome to Slot Design'));
+  assert.ok(welcome);
+  assert.match(welcome.text, /Open your personal sign-in link:\nhttp:\/\/127\.0\.0\.1:8787\/\?token=[a-f0-9]{64}/);
+  assert.match(welcome.text, /create your password, and Module 0 will open/i);
+  const [queued] = await byKey(`enrollment.invited:${id}:%`);
+  assert.equal(queued.status, 'sent');
+  assert.ok(!queued.body.includes('token='));
+  assert.ok(queued.body.includes('{{SIGN_IN_LINK}}'));
+});
+
+test('a replacement sign-in link uses the same mail worker and stays out of course notifications', async () => {
+  const key = `auth.link:${randomUUID()}`;
+  await sql`insert into lms.notifications(dedupe_key,kind,recipient_id,subject,body,link_path,not_after)
+    values(${key},'auth.link_requested',${learner},'Your Slot Design sign-in link','Open {{SIGN_IN_LINK}}','/',now()+interval '15 minutes')`;
+  const mail = fake();
+  await deliver(new Date(Date.now() + 2_000), mail.provider);
+  const sent = mail.sent.find(m => m.to === 'alex@example.test' && m.subject === 'Your Slot Design sign-in link');
+  assert.ok(sent);
+  assert.match(sent.text, /\?token=[a-f0-9]{64}/);
+  assert.ok(!(await readWorkspace(learner)).notifications.some((n: { dedupe_key: string }) => n.dedupe_key === key));
+  const [queued] = await sql`select body,status from lms.notifications where dedupe_key=${key}`;
+  assert.equal(queued.status, 'sent');
+  assert.ok(queued.body.includes('{{SIGN_IN_LINK}}') && !queued.body.includes('token='));
+});
+
 test('events become emails once: confirmation, expert notice, feedback without the content of the work', async () => {
   // Отдельный участник: другие тесты ожидают, что у Sam нет отзывов.
   const writer = randomUUID(); const address = `${writer}@example.test`;

@@ -1,4 +1,4 @@
-import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
@@ -30,7 +30,7 @@ export async function requestLink(email: string) {
   email = email.toLowerCase();
   await rateLimit(`email:${email}`, 6);
   const [profile] = await sql`select id,revoked_at,access_ends_at from lms.profiles where email=${email}`;
-  const generic = { message: 'If you have course access, a sign-in link is on its way. It expires in 15 minutes.' };
+  const generic = { message: 'If you have course access, a one-time sign-in link is on its way. It expires soon.' };
   if (!profile || profile.revoked_at || new Date(profile.access_ends_at) <= new Date()) return generic;
   if (cfg.mode === 'local') {
     if (!email.endsWith('@example.test')) return generic;
@@ -38,9 +38,10 @@ export async function requestLink(email: string) {
     await sql`insert into lms.dev_tokens(hash,profile_id,expires_at) values(${hash(token)},${profile.id},now()+interval '15 minutes')`;
     return { ...generic, localLink: `${cfg.origin}/?token=${token}`, localEmail: email };
   }
-  const client = await supabase();
-  const { error } = await client.auth.signInWithOtp({ email, options: { shouldCreateUser: false, emailRedirectTo: cfg.origin } });
-  if (error) throw new AppError('email_unavailable', 'The sign-in email could not be requested. Try again shortly.', 503);
+  // Повторный вход и восстановление идут через тот же корпоративный SMTP, что и первое приглашение.
+  // Токен генерирует обработчик непосредственно перед отправкой, не хранит в БД и не раскрывает через API.
+  await sql`insert into lms.notifications(dedupe_key,kind,recipient_id,subject,body,link_path,not_after)
+    values(${`auth.link:${randomUUID()}`},'auth.link_requested',${profile.id},'Your Slot Design sign-in link',${`Hi,\n\nOpen your personal sign-in link:\n{{SIGN_IN_LINK}}\n\nChoose “Continue to course”. This link works once and expires soon. If you did not ask for it, you can ignore this email.`},'/',now()+interval '15 minutes')`;
   return generic;
 }
 export async function exchange(token: string | null, code: string | null = null, flowId?: string) {

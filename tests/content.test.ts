@@ -2,7 +2,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { command, readWorkspace } from '../src/lib/service';
-import { downloadFile, uploadFile } from '../src/lib/files';
+import { downloadFile, playVideo, uploadFile } from '../src/lib/files';
 import { sql } from '../src/lib/db';
 
 const learner = '10000000-0000-4000-8000-000000000001';
@@ -15,6 +15,23 @@ after(() => sql.end());
 
 const material = (id: string, revision: number, extra: Record<string, unknown>) => ({ id, expectedRevision: revision, module: 3, position: 1, audience: 'participant', title: 'Session curves', body: 'Secret body', links: [{ label: 'Reading', url: 'https://example.test/read' }], published: true, opensAt: null, files: [], ...extra });
 const find = (rows: { id: string }[], id: string) => rows.find(r => r.id === id) as Record<string, unknown> | undefined;
+
+test('Module 0 video opens only after publication and only for an active participant', async () => {
+  const mp4 = Buffer.from('000000106674797069736f6d00000000000000086d6f6f76000000086d646174', 'hex');
+  await assert.rejects(uploadFile(learner, 'lesson.mp4', mp4), /Only administrators/);
+  const file = await uploadFile(admin, 'lesson.mp4', mp4);
+  const id = randomUUID();
+  const input = { id, expectedRevision: 0, module: 0, position: 1, audience: 'participant', title: 'Intro video', body: '', links: [], published: false, opensAt: null, files: [file.id] };
+  const draft = await command(admin, 'material.save', input);
+  await assert.rejects(playVideo(learner, file.id), /not available/);
+  await command(admin, 'material.save', { ...input, expectedRevision: draft.revision, published: true });
+  const open = await playVideo(learner, file.id);
+  assert.equal(open.file.mime, 'video/mp4');
+  assert.deepEqual(open.bytes, mp4);
+  assert.ok((await readWorkspace(learner)).materialFiles.some((f: { file_id: string }) => f.file_id === file.id));
+  await command(admin, 'material.save', { ...input, expectedRevision: draft.revision + 1, published: false });
+  await assert.rejects(playVideo(learner, file.id), /not available/);
+});
 
 test('a material before its opening time shows only the title; content and files stay closed', async () => {
   const file = await uploadFile(admin, 'handout.txt', Buffer.from('Handout'));
