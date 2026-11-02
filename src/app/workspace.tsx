@@ -360,13 +360,32 @@ function SessionCard({ session, now }: { session: Row; now: number }) {
   </section>;
 }
 
-function MaterialBody({ material, data }: { material: Row; data: Data }) {
+function LessonVideo({ fileId, captionId, title, studied }: { fileId: string; captionId?: string; title: string; studied: boolean }) {
+  const video = useRef<HTMLVideoElement>(null);
+  const [captionsOn, setCaptionsOn] = useState(false);
+  const [replaying, setReplaying] = useState(false);
+  const covered = studied && !replaying;
+  useEffect(() => { if (studied) { video.current?.pause(); setReplaying(false); } }, [studied]);
+  useEffect(() => { if (video.current?.textTracks[0]) video.current.textTracks[0].mode = captionsOn ? 'showing' : 'disabled'; }, [captionsOn, captionId]);
+  return <div className="lesson-player">
+    <div className={`lesson-video-wrap ${covered ? 'is-studied' : ''}`}>
+      <video ref={video} className="lesson-video" controls={!covered} playsInline preload="metadata" aria-label={title} aria-hidden={covered} tabIndex={covered ? -1 : undefined} src={`/api/v1/files/${fileId}/play`}>
+        {captionId && <track kind="captions" src={`/api/v1/files/${captionId}/captions`} srcLang="en" label="English"/>}
+        Your browser cannot play this video. <a href={`/api/v1/files/${fileId}/download`}>Download it here</a>.
+      </video>
+      {covered && <div className="lesson-watched-cover"><span>Studied</span><button type="button" onClick={() => setReplaying(true)}>Watch again</button></div>}
+    </div>
+    {captionId && !covered && <button type="button" className="secondary captions-toggle" aria-pressed={captionsOn} onClick={() => setCaptionsOn(on => !on)}>{captionsOn ? 'Turn off English subtitles' : 'Turn on English subtitles'}</button>}
+  </div>;
+}
+
+function MaterialBody({ material, data, studied = false }: { material: Row; data: Data; studied?: boolean }) {
   const files = data.materialFiles.filter(f => f.material_id === material.id);
   const videos = files.filter(f => data.files.find(x => x.id === f.file_id)?.mime === 'video/mp4');
   const captions = files.find(f => data.files.find(x => x.id === f.file_id)?.mime === 'text/vtt');
   const attachments = files.filter(f => !videos.includes(f) && f !== captions);
   return <>{material.body && <p className="preserve">{material.body}</p>}
-    {videos.map(f => <video key={f.file_id} className="lesson-video" controls playsInline preload="metadata" aria-label={material.title} src={`/api/v1/files/${f.file_id}/play`}>{captions && <track kind="captions" src={`/api/v1/files/${captions.file_id}/captions`} srcLang="en" label="English" default/>}Your browser cannot play this video. <a href={`/api/v1/files/${f.file_id}/download`}>Download it here</a>.</video>)}
+    {videos.map(f => <LessonVideo key={f.file_id} fileId={f.file_id} captionId={captions?.file_id} title={material.title} studied={studied}/>)}
     {(material.links?.length > 0 || attachments.length > 0) && <ul className="material-links">{material.links?.map((l: { label: string; url: string }) => <li key={l.url}><a href={l.url} target="_blank" rel="noopener noreferrer">{l.label} ↗</a></li>)}{attachments.map(f => <li key={f.file_id}><a href={`/api/v1/files/${f.file_id}/download`}>{data.files.find(x => x.id === f.file_id)?.name || 'Download file'}</a></li>)}</ul>}</>;
 }
 
@@ -378,7 +397,7 @@ function Materials({ data, module, refresh, onAuth }: { data: Data; module: numb
   if (!list.length) return <section className="materials"><h2>Materials</h2><p className="muted">Materials for this module will appear here when published.</p></section>;
   return <section className="materials"><div className="section-heading"><h2>Materials</h2>{open.length > 0 && <span className="small muted" role="status">{studied.length} of {open.length} studied</span>}</div><ErrorBox error={error}/>
     {list.map(m => { const done = studied.includes(m); return <article className={`material ${m.open ? '' : 'locked'}`} key={m.id}><div className="section-heading"><h3>{m.title}</h3>{m.open && <label className="studied"><input type="checkbox" checked={done} disabled={busy === m.id} onChange={async e => { setBusy(m.id); setError(''); try { await cmd('material.progress',{ materialId: m.id, studied: e.target.checked }); await refresh(); } catch(err) { setError((err as Error).message); if ((err as RequestError).code === 'unauthenticated') onAuth(); } finally { setBusy(''); } }}/>Studied</label>}</div>
-      {m.open ? <MaterialBody material={m} data={data}/> : <p className="muted small">Opens {date(m.opens_at)}.</p>}</article>; })}
+      {m.open ? <MaterialBody material={m} data={data} studied={done}/> : <p className="muted small">Opens {date(m.opens_at)}.</p>}</article>; })}
   </section>;
 }
 
