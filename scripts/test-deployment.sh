@@ -35,7 +35,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 const path = 'src/app/api/v1/[...path]/route.ts';
 const source = readFileSync(path, 'utf8');
 if (!source.includes('const cfg = config();')) throw new Error('Fault injection seam changed');
-writeFileSync(path, source.replace('const cfg = config();', 'const cfg = config(); throw new Error("synthetic deployment failure");'));
+// Условие сохраняет проверку типов последующего кода; отказ возникает только при запуске.
+writeFileSync(path, source.replace('const cfg = config();', 'const cfg = config(); if (process.env.LMS_MODE) throw new Error("synthetic deployment failure");'));
 JS
 git add src
 git -c user.name='Deployment test' -c user.email='ci@example.test' commit -m 'Synthetic failed release (CI only)'
