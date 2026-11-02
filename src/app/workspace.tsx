@@ -77,7 +77,7 @@ function SignIn({ local, onSuccess, reauth = false }: { local: boolean; onSucces
   }, []);
   async function enter(value: string) { setBusy(true); setError(''); try { await api('auth/exchange', value.startsWith('code:') ? (([code, flowId]) => flowId ? { code, flowId } : { code })(value.slice(5).split(':')) : { token: value }); onSuccess(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }
   return <div className={reauth ? 'reauth' : 'login-shell'}><section className="login-card">
-    <div className="brand"><span className="brand-mark">S.</span> SLOT DESIGN</div>
+    <div className="brand"><img className="brand-logo" src="/brand/talentgrator.png" alt="Talentgrator" width={72} height={44}/><span>Slot design</span></div>
     <p className="eyebrow">FROM IDEA TO RELEASE</p><h1>{reauth ? 'Sign in to continue' : 'A space to build your next idea.'}</h1>
     <p className="muted">Your course, work in progress and expert feedback, together.</p>
     {token ? <><p>Continue to open your course. This link can be used once.</p><button disabled={busy} onClick={() => enter(token)}>Continue to course</button></> : <>
@@ -92,7 +92,7 @@ function SignIn({ local, onSuccess, reauth = false }: { local: boolean; onSucces
     <p className="muted small">Access is by invitation.</p><ErrorBox error={error} />
     {message && <p role="status">{message}</p>}
     {local && <div className="test-mail"><strong>Local test mailbox</strong><p>Use alex@example.test (participant), expert@example.test or admin@example.test. No real email is sent.</p>{link && <button className="secondary" onClick={() => enter(new URL(link).searchParams.get('token')!)} disabled={busy}>Open test sign-in link</button>}</div>}
-  </section><aside className="login-aside"><div className="motif"><span>01</span><span>02</span><span>03</span></div><p>Explore the idea.<br/>Make the choices.<br/><em>Build the concept.</em></p><small>7 shared sessions · 15 November–27 December 2026<br/>Sundays, 15:00 CET · Europe/Berlin</small></aside></div>;
+  </section><aside className="login-aside"><p>Explore the idea.<br/>Make the choices.<br/><em>Build the concept.</em></p><small>Live sessions on Sundays, 15:00 CET · 15 November–20 December 2026<br/>Final pitch in January 2027 · Europe/Berlin</small></aside></div>;
 }
 
 function ReauthDialog({ local, onSuccess }: { local: boolean; onSuccess: () => void }) {
@@ -137,7 +137,7 @@ export default function Workspace() {
   return <>
     {local && <div className="dev-banner">LOCAL DEVELOPMENT · Synthetic accounts and test deadlines</div>}
     <a className="skip" href="#main">Skip to content</a>
-    <div className="app-shell"><aside className="sidebar"><a href="/" className="brand"><span className="brand-mark">S.</span><span>SLOT<br/>DESIGN</span></a><p className="course-caption">From idea to release</p>
+    <div className="app-shell"><aside className="sidebar"><a href="/" className="brand"><img className="brand-logo" src="/brand/talentgrator.png" alt="Talentgrator" width={72} height={44}/><span>Slot design<br/><em>From idea to release</em></span></a>
       <div className="cohort"><span className="dot"/> November 2026 cohort</div>
       <p className="nav-label">{staff ? 'WORKSPACE' : 'YOUR COURSE'}</p>
       <nav aria-label="Course navigation">{staff ? <>
