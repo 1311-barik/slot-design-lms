@@ -58,7 +58,7 @@ QA_ORIGIN=http://localhost:8788 node --import tsx tests/password.integration.ts
 
 Каноническая папка проекта в workspace: `/Users/shura/Claude-Workspace/1-projects/2026/igaming-design/`.
 
-- `02-in-progress/2026-10-28_lms-technical-spec-v4.md` — ТЗ v0.4.
+- `02-in-progress/2026-11-02_lms-technical-spec-v5.md` — ТЗ v0.5; точная дата январского питча ещё не указана.
 - `02-in-progress/lms-design/technical-design-v0.1.md` — технические контракты.
 - `02-in-progress/lms-design/CONTEXT.md` и `PRODUCT_USABILITY_PROFILE.md` — термины и UX-профиль.
 - `app/docs/audit-2026-11-01.md` — независимый аудит; локально, вне Git.
