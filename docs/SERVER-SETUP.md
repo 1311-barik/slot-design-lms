@@ -64,6 +64,8 @@ sudoedit /etc/slot-design-lms/env
 
 `SUPABASE_ANON_KEY` — публичный anon/publishable key. `SUPABASE_SERVICE_ROLE_KEY` — серверный service_role/secret key, никогда не `NEXT_PUBLIC_*`. Приватный бакет указан в `SUPABASE_STORAGE_BUCKET`. В файле окружения использовать простой `NAME=value`, без `export` и команд shell; не выполнять его через `source`. `MAIL_PROVIDER` пока пустой. Реальный файл не хранить в клоне Git.
 
+До запуска загрузок установить `clamav-daemon` и `clamav-freshclam`, дождаться обновления баз. В `/etc/clamav/clamd.conf` задать `LocalSocketMode 660`, `StreamMaxLength 60M`, `MaxFileSize 60M`; добавить системного пользователя `lms` в группу `clamav`, включить `clamav-daemon.service` и `clamav-freshclam.service`, затем перезапустить LMS. В runtime env указать `CLAMAV_SOCKET=/var/run/clamav/clamd.ctl`. Без сканера или при его сбое рабочая LMS отклоняет загрузку; вход и чтение материалов продолжают работать. Проверить чистый файл и стандартный EICAR-образец через `clamdscan --stream` перед приглашением участников. Не открывать TCP-порт сканера наружу.
+
 ### Ветка A: существующий Supabase — перенос текущей LMS
 
 Получить значения через защищённый канал от владельца, изменить только публичный адрес и локальный runtime-каталог. Сохранить прежний Supabase project ref и бакет. Не запускать `db:setup` и не загружать seed. Данные уже находятся в Supabase. При той же версии миграций административный пароль для запуска не нужен.

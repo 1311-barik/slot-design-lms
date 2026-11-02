@@ -6,12 +6,15 @@ import { transaction } from './db';
 import { config } from './config';
 import { AppError, uuid } from './contract';
 import { inspectContent } from './file-validation';
+import { scanForMalware } from './malware-scan';
 function storage() {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY || !process.env.SUPABASE_STORAGE_BUCKET) throw new AppError('storage_unconfigured', 'File storage is not configured.', 503);
   return createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false, autoRefreshToken: false } }).storage.from(process.env.SUPABASE_STORAGE_BUCKET);
 }
 export async function uploadFile(actor: string, name: string, bytes: Buffer) {
   const cfg = config(); const meta = await inspectContent(name, bytes); const id = randomUUID();
+  if (cfg.mode === 'supabase' && !process.env.CLAMAV_SOCKET) throw new AppError('malware_scan_unavailable', 'The file safety check is temporarily unavailable. Try again later.', 503);
+  await scanForMalware(bytes);
   const path = join(cfg.runtime, 'files', id);
   let stored = false;
   try {
