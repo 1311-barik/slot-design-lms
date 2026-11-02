@@ -95,7 +95,7 @@ SWITCHED=true
 sudo systemctl restart slot-design-lms.service
 HEALTHY=false
 for ((attempt=0; attempt<20; attempt++)); do
-  if curl --silent --show-error --fail --max-time 3 -H "Host: $HOST" http://127.0.0.1:8787/api/v1/config 2>/dev/null | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{try{if(typeof JSON.parse(s).local!=="boolean")process.exit(1)}catch{process.exit(1)}}'; then
+  if curl --silent --show-error --fail --max-time 3 -H "Host: $HOST" http://127.0.0.1:8787/api/v1/config 2>/dev/null | node -e 'try{if(typeof JSON.parse(require("node:fs").readFileSync(0,"utf8")).local!=="boolean")process.exit(1)}catch{process.exit(1)}'; then
     HEALTHY=true; break
   fi
   sleep 1
