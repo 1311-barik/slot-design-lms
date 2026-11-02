@@ -11,6 +11,6 @@
 - [Первый вход участника и образец приветственного письма](ONBOARDING.md).
 - [Что нужно до запуска участников](RELEASE-CHECKLIST.md).
 - [Предметная модель](agents/domain.md), [правила интерфейса](agents/usability.md), [учёт работы](agents/issue-tracker.md).
-- Шаблоны [nginx](deployment/nginx.conf.example) и [сервиса приложения](deployment/slot-design-lms.service.example) — используются по SERVER-SETUP. Адреса и окружение задаются получателем.
+- Шаблоны [nginx](deployment/nginx.conf.example), [безопасного журнала](deployment/nginx-log-format.conf.example) и [сервиса приложения](deployment/slot-design-lms.service.example) — используются по SERVER-SETUP. Адреса и окружение задаются получателем.
 
 Исторические отчёты, протоколы тестирования и изображения остаются в рабочем пространстве вне Git. Они описывают состояние на дату проверки и не заменяют актуальные документы выше. Полные исходные требования курса находятся в соседней папке проекта; расположение указано в DEVELOPMENT.

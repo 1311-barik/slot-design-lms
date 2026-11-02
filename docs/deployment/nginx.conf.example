@@ -2,12 +2,14 @@
 server {
     listen 80;
     server_name lms.example.org;
+    access_log /var/log/nginx/slot-design-lms-access.log slot_design_safe;
     location ^~ /.well-known/acme-challenge/ { root /var/www/letsencrypt; }
     location / { return 301 https://$host$request_uri; }
 }
 server {
     listen 443 ssl;
     server_name lms.example.org;
+    access_log /var/log/nginx/slot-design-lms-access.log slot_design_safe;
     ssl_certificate /etc/letsencrypt/live/lms.example.org/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/lms.example.org/privkey.pem;
     client_max_body_size 51m;

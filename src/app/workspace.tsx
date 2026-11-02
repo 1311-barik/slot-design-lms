@@ -67,10 +67,11 @@ function nextStep(assignment: Row | undefined, work: Row | undefined, draft: Row
 function SignIn({ local, onSuccess, reauth = false }: { local: boolean; onSuccess: () => void; reauth?: boolean }) {
   const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [message, setMessage] = useState(''); const [link, setLink] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   const [token, setToken] = useState('');
-  // token / token_hash — свой шаблон письма; code — стандартное письмо Supabase (PKCE). Ссылка тратится только после нажатия Continue.
+  // Новые письма несут token во фрагменте URL; query остаётся для уже отправленных ссылок.
+  // code — стандартное письмо Supabase (PKCE). Ссылка тратится только после нажатия Continue.
   useEffect(() => {
     const params = new URLSearchParams(location.search); const hash = new URLSearchParams(location.hash.slice(1));
-    const value = params.get('token') || params.get('token_hash'); const code = params.get('code'); const flow = params.get('sb_flow_id');
+    const value = hash.get('token') || params.get('token') || params.get('token_hash'); const code = params.get('code'); const flow = params.get('sb_flow_id');
     if (value) setToken(value); else if (code) setToken(`code:${code}${flow ? `:${flow}` : ''}`);
     if (params.get('error') || hash.get('error')) setError('This sign-in link is invalid or expired. Request a new link.');
     if (value || code || params.get('error') || hash.get('error')) history.replaceState(null, '', '/');
@@ -91,7 +92,7 @@ function SignIn({ local, onSuccess, reauth = false }: { local: boolean; onSucces
     </>}
     <p className="muted small">Access is by invitation.</p><ErrorBox error={error} />
     {message && <p role="status">{message}</p>}
-    {local && <div className="test-mail"><strong>Local test mailbox</strong><p>Use alex@example.test (participant), expert@example.test or admin@example.test. No real email is sent.</p>{link && <button className="secondary" onClick={() => enter(new URL(link).searchParams.get('token')!)} disabled={busy}>Open test sign-in link</button>}</div>}
+    {local && <div className="test-mail"><strong>Local test mailbox</strong><p>Use alex@example.test (participant), expert@example.test or admin@example.test. No real email is sent.</p>{link && <button className="secondary" onClick={() => enter(new URLSearchParams(new URL(link).hash.slice(1)).get('token')!)} disabled={busy}>Open test sign-in link</button>}</div>}
   </section><aside className="login-aside"><p>Explore the idea.<br/>Make the choices.<br/><em>Build the concept.</em></p><small>Live sessions on Sundays, 15:00 CET · 15 November–20 December 2026<br/>Final pitch in January 2027 · Europe/Berlin</small></aside></div>;
 }
 

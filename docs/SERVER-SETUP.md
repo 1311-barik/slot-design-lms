@@ -132,6 +132,7 @@ bash scripts/deploy.sh https://lms.example.org
 
 ```sh
 sudo install -d -m 0755 /var/www/letsencrypt
+sudo install -m 0644 docs/deployment/nginx-log-format.conf.example /etc/nginx/conf.d/slot-design-lms-log-format.conf
 sudo install -m 0644 docs/deployment/nginx-http.conf.example /etc/nginx/sites-available/slot-design-lms
 sudoedit /etc/nginx/sites-available/slot-design-lms
 sudo ln -s /etc/nginx/sites-available/slot-design-lms /etc/nginx/sites-enabled/slot-design-lms
@@ -157,7 +158,7 @@ sudo systemctl status certbot.timer --no-pager
 
 - Site URL: `https://lms.example.org/`.
 - Redirect URLs: точные `https://lms.example.org` и `https://lms.example.org/`. Во время переноса прежний рабочий адрес оставить до окончания проверки; localhost убрать из рабочего списка.
-- Настроить SMTP LMS для приглашений, повторных ссылок входа и учебных уведомлений. Сервер генерирует одноразовую ссылку через Supabase Auth перед отправкой, поэтому она работает в браузере получателя. Старые письма после смены `APP_ORIGIN` не использовать.
+- Настроить SMTP LMS для приглашений, повторных ссылок входа и учебных уведомлений. Сервер генерирует одноразовую ссылку через Supabase Auth перед отправкой, поэтому она работает в браузере получателя. Старые письма после смены `APP_ORIGIN` не использовать. Новые ссылки несут токен во фрагменте `#token=…`, который браузер не посылает в GET-запросе. Формат журнала LMS записывает путь без query string и без Referrer; не заменять его стандартным `combined`, пока действуют старые письма с `?token=…`.
 
 Проверить с внешнего компьютера:
 
