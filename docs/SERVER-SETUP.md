@@ -132,6 +132,9 @@ bash scripts/deploy.sh https://lms.example.org
 
 ```sh
 sudo install -d -m 0755 /var/www/letsencrypt
+sudo touch /var/log/nginx/slot-design-lms-access.log
+sudo chown www-data:adm /var/log/nginx/slot-design-lms-access.log
+sudo chmod 0640 /var/log/nginx/slot-design-lms-access.log
 sudo install -m 0644 docs/deployment/nginx-log-format.conf.example /etc/nginx/conf.d/slot-design-lms-log-format.conf
 sudo install -m 0644 docs/deployment/nginx-http.conf.example /etc/nginx/sites-available/slot-design-lms
 sudoedit /etc/nginx/sites-available/slot-design-lms
