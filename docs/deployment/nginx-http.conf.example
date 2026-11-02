@@ -1,0 +1,7 @@
+# Только получение первого сертификата. Затем заменить на nginx.conf.example.
+server {
+    listen 80;
+    server_name lms.example.org;
+    location ^~ /.well-known/acme-challenge/ { root /var/www/letsencrypt; }
+    location / { return 503; }
+}

@@ -13,7 +13,7 @@ Environment=NODE_ENV=production
 Environment=NEXT_TELEMETRY_DISABLED=1
 EnvironmentFile=/etc/slot-design-lms/env
 # Node 24 установлен отдельно от системного Node других приложений.
-ExecStart=/opt/slot-design-node-v24.15.0/bin/node scripts/next.mjs start --hostname 127.0.0.1 --port 8787
+ExecStart=/opt/slot-design-node/bin/node scripts/next.mjs start --hostname 127.0.0.1 --port 8787
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

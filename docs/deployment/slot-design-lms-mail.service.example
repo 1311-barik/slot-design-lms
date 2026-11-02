@@ -12,7 +12,7 @@ Group=lms
 WorkingDirectory=/opt/slot-design-lms/current
 Environment=NODE_ENV=production
 EnvironmentFile=/etc/slot-design-lms/env
-ExecStart=/opt/slot-design-node-v24.15.0/bin/node --import tsx scripts/mail-worker.ts
+ExecStart=/opt/slot-design-node/bin/node --import tsx scripts/mail-worker.ts
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

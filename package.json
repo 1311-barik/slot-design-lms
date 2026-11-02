@@ -12,7 +12,10 @@
     "test": "sh scripts/test.sh tests/*.test.ts",
     "db:setup": "node --import tsx scripts/setup-db.ts",
     "mail": "node --import tsx scripts/mail-worker.ts",
-    "supabase:setup": "node --import tsx scripts/supabase-setup.ts"
+    "supabase:setup": "node --import tsx scripts/supabase-setup.ts",
+    "db:migrate": "node --import tsx scripts/migrate-production.ts",
+    "deploy:check": "node --import tsx scripts/check-deployment.ts",
+    "db:tool": "node --import tsx scripts/db-tool.ts"
   },
   "dependencies": {
     "next": "16.4.3",

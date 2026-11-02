@@ -1,5 +1,10 @@
-# Шаблон для отдельного согласованного домена. Не заменяет существующие сайты Hetzner.
-# Добавлять только после настройки TLS и выполнения production gates из architecture.md.
+# Отдельный сайт LMS. Заменить lms.example.org; сертификат получить по SERVER-SETUP.md.
+server {
+    listen 80;
+    server_name lms.example.org;
+    location ^~ /.well-known/acme-challenge/ { root /var/www/letsencrypt; }
+    location / { return 301 https://$host$request_uri; }
+}
 server {
     listen 443 ssl;
     server_name lms.example.org;

@@ -1,20 +1,20 @@
 // Подготовка рабочего проекта Supabase. Повторный запуск безопасен: ничего не удаляет и не перезаписывает.
 // Запуск (секреты — из файла вне workspace):
-//   set -a; . ~/.config/slot-design-lms/env; set +a
-//   node --import tsx scripts/supabase-setup.ts [--admin email "Name"]… [--reviewer email "Name"]… [--access-until 2027-02-11]
+//   node --env-file=/secure/admin.env --import tsx scripts/supabase-setup.ts --project-ref REF [--admin email "Name"]… [--reviewer email "Name"]… [--access-until 2027-02-11]
 // --admin и --reviewer можно повторять.
 import { sql } from '../src/lib/db';
 import { migrate } from '../src/lib/migrate';
 import { courseAssignments } from '../src/lib/course';
 import { ensureAuthUser, serviceClient } from '../src/lib/supabase-admin';
+import { deploymentEnvironment, projectArgument } from './deployment-env';
 
-if (process.env.LMS_MODE !== 'supabase') throw new Error('Run with LMS_MODE=supabase and the Supabase environment loaded.');
-for (const name of ['DATABASE_URL', 'SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_STORAGE_BUCKET']) if (!process.env[name]) throw new Error(`${name} is not set.`);
-if (/@(127\.0\.0\.1|localhost)[:/]/.test(process.env.DATABASE_URL!)) throw new Error('DATABASE_URL points to the local database, not Supabase.');
-if (/\[YOUR-PASSWORD\]|\[SECRET-KEY\]/.test(`${process.env.DATABASE_URL}${process.env.SUPABASE_SERVICE_ROLE_KEY}`)) throw new Error('Replace [YOUR-PASSWORD] and [SECRET-KEY] in ~/.config/slot-design-lms/env first.');
+deploymentEnvironment(process.env, 'admin', projectArgument());
 
 const args = process.argv.slice(2);
 const options = (flag: string) => args.flatMap((a, i) => a === flag ? [[args[i + 1], args[i + 2]]] : []);
+for (const flag of ['--admin', '--reviewer']) for (const [email, name] of options(flag)) {
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !name?.trim() || name.startsWith('--')) throw new Error(`Use ${flag} email "Full name".`);
+}
 const until = args.includes('--access-until') ? new Date(`${args[args.indexOf('--access-until') + 1]}T23:59:59+01:00`) : new Date(Date.now() + 2 * 365 * 86_400_000);
 if (Number.isNaN(until.getTime())) throw new Error('Use --access-until YYYY-MM-DD.');
 const log = (message: string) => console.log(`• ${message}`);
@@ -66,10 +66,9 @@ try {
   }
 
   // Закрытая схема не должна быть доступна через Data API (exposed schemas).
-  const probe = await fetch(`${process.env.SUPABASE_URL}/rest/v1/profiles?select=id&limit=1`, { headers: { apikey: process.env.SUPABASE_ANON_KEY!, 'Accept-Profile': 'lms' } });
-  const body = await probe.text();
-  if (probe.ok) throw new Error('The lms schema is reachable through the Supabase Data API. Remove it from exposed schemas.');
-  log(`Data API: lms schema not exposed (HTTP ${probe.status})`);
-  if (!/PGRST106|schema/i.test(body)) log('Data API answer did not name the schema; check Settings → API → Exposed schemas manually.');
+  const probe = await fetch(`${process.env.SUPABASE_URL}/rest/v1/profiles?select=id&limit=0`, { headers: { apikey: process.env.SUPABASE_ANON_KEY!, 'Accept-Profile': 'lms' }, signal: AbortSignal.timeout(15000) });
+  const body = await probe.json().catch(() => ({}));
+  if (probe.status !== 406 || body.code !== 'PGRST106') throw new Error('Cannot confirm that lms is excluded from the Data API. Check Exposed schemas before launch.');
+  log('Data API: lms schema not exposed');
   log('done');
 } finally { await sql.end(); }
