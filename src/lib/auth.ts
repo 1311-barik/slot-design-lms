@@ -5,6 +5,7 @@ import { createServerClient } from '@supabase/ssr';
 import { sql, type Tx } from './db';
 import { AppError } from './contract';
 import { config } from './config';
+import { earlyCommencement } from './early-commencement';
 
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 const derive = promisify(scrypt) as (password: string, salt: Buffer, length: number) => Promise<Buffer>;
@@ -91,23 +92,38 @@ async function startLocalSession(profileId: string) {
   (await cookies()).set(cookieName, session, { httpOnly: true, sameSite: 'lax', secure: false, path: '/', maxAge: 8 * 3600 });
 }
 // Создать или сменить пароль может только вошедший пользователь; ссылка на почту остаётся запасным входом.
-export async function setPassword(user: string, password: string) {
+export async function setPassword(user: string, password: string, consent?: { version: string }) {
   checkPassword(password);
-  const [profile] = await sql`select id from lms.profiles where id=${user} and revoked_at is null and access_ends_at>now()`;
-  if (!profile) throw new AppError('access_expired', 'Course access is not active. Contact the administrator.', 403);
-  if (config().mode === 'local') {
-    const salt = randomBytes(16); const derived = await derive(password, salt, 32);
-    await sql`insert into lms.dev_passwords(profile_id,hash) values(${user},${`${salt.toString('hex')}:${derived.toString('hex')}`}) on conflict(profile_id) do update set hash=excluded.hash,updated_at=now()`;
-  } else {
-    const { error } = await (await supabase()).auth.updateUser({ password });
-    if (error) throw error.code === 'weak_password' ? new AppError('weak_password', 'Choose a stronger password.', 422, ['password'])
-      : error.code === 'same_password' ? new AppError('same_password', 'Choose a password different from the current one.', 422, ['password'])
-      : new AppError('password_unavailable', 'The password could not be saved. Sign in again and retry.', 503);
-  }
-  // Первое создание пароля — событие для администраторов; смена пароля писем не создаёт.
-  await sql`with first as (select id from lms.profiles where id=${user} and password_set_at is null and role='participant')
-    insert into lms.outbox(kind,aggregate_id) select 'participant.password', id from first on conflict do nothing`;
-  await sql`update lms.profiles set password_set_at=now() where id=${user}`;
+  if (consent && consent.version !== earlyCommencement.version) throw new AppError('consent_version', 'The consent text has changed. Reload this page and review it again.', 409, ['earlyCommencementConsent']);
+  await sql.begin(async tx => {
+    await tx`select pg_advisory_xact_lock(hashtextextended(${user},0))`;
+    const [profile] = await tx`select * from lms.profiles where id=${user} and activated_at is not null and revoked_at is null and access_ends_at>now() for update`;
+    if (!profile) throw new AppError('access_expired', 'Course access is not active. Contact the administrator.', 403);
+    const [existing] = consent ? await tx`select id from lms.early_commencement_consents where owner_id=${user} and course_key=${earlyCommencement.courseKey}` : [];
+    if (consent && (profile.role !== 'participant' || (profile.password_set_at && !existing))) throw new AppError('consent_registration_only', 'This consent can only be recorded during participant registration.', 409);
+    if (config().mode === 'local') {
+      const salt = randomBytes(16); const derived = await derive(password, salt, 32);
+      await tx`insert into lms.dev_passwords(profile_id,hash) values(${user},${`${salt.toString('hex')}:${derived.toString('hex')}`}) on conflict(profile_id) do update set hash=excluded.hash,updated_at=now()`;
+    } else {
+      const { error } = await (await supabase()).auth.updateUser({ password });
+      // Auth и PostgreSQL — разные сервисы: после сбоя записи допускаем повтор первого сохранения того же пароля.
+      if (error && !(error.code === 'same_password' && (!profile.password_set_at || (consent && existing)))) throw error.code === 'weak_password' ? new AppError('weak_password', 'Choose a stronger password.', 422, ['password'])
+        : error.code === 'same_password' ? new AppError('same_password', 'Choose a password different from the current one.', 422, ['password'])
+        : new AppError('password_unavailable', 'The password could not be saved. Sign in again and retry.', 503);
+    }
+    // Первое создание пароля — событие для администраторов; смена пароля писем не создаёт.
+    await tx`with first as (select id from lms.profiles where id=${user} and password_set_at is null and role='participant')
+      insert into lms.outbox(kind,aggregate_id) select 'participant.password', id from first on conflict do nothing`;
+    await tx`update lms.profiles set password_set_at=coalesce(password_set_at,clock_timestamp()) where id=${user}`;
+    if (consent && !existing) {
+      await tx`set local role lms_runtime`;
+      await tx`select set_config('app.actor',${user},true)`;
+      const [record] = await tx`insert into lms.early_commencement_consents(owner_id,participant_name,participant_email,course_key,course_title,consent_version,consent_text)
+        values(${user},${profile.name},${profile.email},${earlyCommencement.courseKey},${earlyCommencement.courseTitle},${earlyCommencement.version},${earlyCommencement.text}) returning id`;
+      // Доказательство и событие для отбивки сохраняются одной транзакцией с завершением регистрации.
+      await tx`insert into lms.outbox(kind,aggregate_id) values('consent.early_commencement',${record.id})`;
+    }
+  });
 }
 // Ответ один для неизвестного адреса и неверного пароля: не раскрываем, есть ли аккаунт.
 export async function passwordLogin(email: string, password: string) {

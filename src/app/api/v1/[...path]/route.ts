@@ -113,7 +113,8 @@ async function handle(request: Request, context: Context) {
     if (path === 'auth/logout') { await logout(); return response({ ok: true }); }
     if (path === 'auth/password') {
       const user = await actor();
-      await setPassword(user, z.object({ password: z.string().max(200) }).strict().parse(data).password); return response({ ok: true });
+      const input = z.object({ password: z.string().max(200), earlyCommencementConsent: z.boolean().optional(), consentVersion: z.string().max(100).optional() }).strict().parse(data);
+      await setPassword(user, input.password, input.earlyCommencementConsent === true ? { version: input.consentVersion || '' } : undefined); return response({ ok: true });
     }
     const user = await actor();
     requireSetupDone(await setupState(user));

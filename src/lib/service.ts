@@ -32,13 +32,14 @@ export async function readWorkspace(actor: string) {
       tx`select * from lms.review_claims`, tx`select * from lms.project_headers`,
       tx`select * from lms.package_items`, tx`select * from lms.questions order by created_at desc`, tx`select * from lms.answers order by created_at`,
     ]);
-    const [materials, materialFiles, progress, sessions, [clock], presentations, reviewers, notifications, feedback] = await Promise.all([
+    const [materials, materialFiles, progress, sessions, [clock], presentations, reviewers, notifications, feedback, earlyCommencementConsents] = await Promise.all([
       tx`select *, (lms.is_admin() or opens_at is null or opens_at<=clock_timestamp()) as open from lms.materials order by module, position, title`,
       tx`select * from lms.material_files`, tx`select * from lms.material_progress`, tx`select * from lms.sessions order by starts_at`,
       tx`select clock_timestamp() as now`, tx`select * from lms.presentations order by created_at`, tx`select * from lms.reviewers`,
       // Администратор видит очередь писем; остальные — только свои уведомления (RLS).
       tx`select * from lms.notifications order by created_at desc limit ${me.role === 'admin' ? 500 : 50}`,
       tx`select * from lms.feedback order by created_at desc`,
+      tx`select * from lms.early_commencement_consents order by accepted_at desc`,
     ]);
     const admin = me.role === 'admin';
     // Закрытый до даты материал: участник получает только название и время открытия (LMS-02).
@@ -53,7 +54,7 @@ export async function readWorkspace(actor: string) {
     for (const work of works) if (work.owner_id === actor && !visibleAssignments.some(a => a.id === work.assignment_id)) {
       visibleAssignments.push({ id: work.assignment_id, module: work.module, spec: work.spec, revision: work.assignment_revision, published: false, due_at: null, late_policy: null });
     }
-    return jsonValue({ me, assignments: visibleAssignments.sort((a,b) => a.module-b.module || String(a.spec.title).localeCompare(b.spec.title)), works, drafts, submissions, reviews, reviewDrafts, files, people: visiblePeople, claims, presentations, reviewers, notifications: admin ? notifications : notifications.filter(n => !['enrollment.invited','auth.link_requested'].includes(n.kind)), feedback, mail: admin ? { provider: mailProvider()?.name || null } : null, project: projects.find(p => p.owner_id === actor) || null, projects: admin ? projects : [], packageItems, questions, answers, materials: visibleMaterials, materialFiles, progress, sessions: visibleSessions, now: clock.now });
+    return jsonValue({ me, assignments: visibleAssignments.sort((a,b) => a.module-b.module || String(a.spec.title).localeCompare(b.spec.title)), works, drafts, submissions, reviews, reviewDrafts, files, people: visiblePeople, claims, presentations, reviewers, earlyCommencementConsents, notifications: admin ? notifications : notifications.filter(n => !['enrollment.invited','auth.link_requested'].includes(n.kind)), feedback, mail: admin ? { provider: mailProvider()?.name || null } : null, project: projects.find(p => p.owner_id === actor) || null, projects: admin ? projects : [], packageItems, questions, answers, materials: visibleMaterials, materialFiles, progress, sessions: visibleSessions, now: clock.now });
   });
 }
 
