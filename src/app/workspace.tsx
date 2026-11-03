@@ -158,6 +158,7 @@ export default function Workspace() {
       <div className="sidebar-bottom"><span className="avatar">{data.me.name.slice(0,1)}</span><div><strong>{data.me.name}</strong><small>{data.me.role === 'reviewer' ? 'Expert' : data.me.role}</small></div><button className="text-button" onClick={() => setAccount(true)}>Account</button><button className="text-button" onClick={async () => { if (dirty && !confirm('Discard unsaved changes and sign out?')) return; await api('auth/logout', {}); location.reload(); }}>Sign out</button></div>
     </aside><main id="main" className="main"><header className="topbar"><span>{staff ? 'Team workspace' : 'Learning workspace'}</span><div className="topbar-actions">{!staff && <button className="secondary small-button" onClick={() => setFeedback(true)}>Feedback</button>}<Notifications data={data} refresh={load} onAuth={auth}/></div><span className="session-note">{upcoming ? <>{sessionState(upcoming, now) === 'started' ? 'Live session started' : 'Next live session'} <strong>{date(upcoming.starts_at)}</strong></> : 'No upcoming live sessions'}</span></header>
       <ErrorBox error={error}/>{error && <button className="secondary" onClick={load}>Retry loading</button>}
+      {!staff && !data.earlyCommencementConsents.some(c => c.owner_id === data.me.id && c.course_key === earlyCommencement.courseKey) && <AccountConsent refresh={load} onAuth={auth}/>}
       {staff ? activeReview ? <Expert data={data} refresh={load} active={activeReview} setActive={id => chooseReview(id, staffTab)} onAuth={auth} onDirty={setDirty} filter={queueFilter} setFilter={setQueueFilter} now={now}/> : staffTab === 'journal' ? <Journal data={data} now={now} filter={journalFilter} setFilter={setJournalFilter} open={id => chooseReview(id, 'journal')}/> : staffTab === 'presentations' ? <Presentations data={data} refresh={load} onAuth={auth}/> : staffTab === 'email' ? <MailAdmin data={data} refresh={load} onAuth={auth}/> : staffTab === 'feedback' ? <FeedbackAdmin data={data}/> : staffTab === 'activity' ? <ActivityDashboard data={data} now={now} open={id => chooseReview(id, 'activity')}/> : staffTab === 'questions' ? <TeamQuestions data={data} refresh={load} onAuth={auth}/> : staffTab === 'content' ? data.me.role === 'admin' ? <ContentAdmin data={data} refresh={load} onAuth={auth} onDirty={setDirty}/> : <TeamMaterials data={data}/> : data.me.role === 'admin' ? <Admin data={data} refresh={load} local={local}/> : <Expert data={data} refresh={load} active={activeReview} setActive={id => chooseReview(id, staffTab)} onAuth={auth} onDirty={setDirty} filter={queueFilter} setFilter={setQueueFilter} now={now}/>
       : module === PROJECT ? <ProjectView data={data} refresh={load} onAuth={auth} open={move}/> : <>
         <div className="page-heading"><p className="eyebrow">MODULE {String(module).padStart(2,'0')}</p><h1>{modules[module]}</h1><p className="muted">{module === 0 ? 'Get ready for the first shared session.' : 'Build your concept one considered decision at a time.'}</p></div>
@@ -304,7 +305,7 @@ function ConsentEvidence({ consent }: { consent?: Row }) {
   return <details className="consent-evidence"><summary>Early commencement consent recorded · {date(consent.accepted_at)}</summary>
     <p>{consent.participant_name} · {consent.participant_email}</p><p>{consent.course_title}</p>
     <p>Recorded at (UTC): {new Date(consent.accepted_at).toISOString()} · Version {consent.consent_version}</p>
-    <p>{consent.consent_text}</p><p className="small muted">Record: {consent.id} · Source: LMS registration</p>
+    <p>{consent.consent_text}</p><p className="small muted">Record: {consent.id} · Source: {consent.source === 'lms_account' ? 'LMS account after registration' : 'LMS registration'}</p>
   </details>;
 }
 
@@ -611,6 +612,20 @@ function Modal({ label, close, children }: { label: string; close: () => void; c
 }
 
 // Решение 31.10.2026: после первого входа по ссылке — свой пароль; ссылка остаётся запасным входом.
+function AccountConsent({ refresh, onAuth }: { refresh: () => Promise<void>; onAuth: () => void }) {
+  const [checked, setChecked] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [saved, setSaved] = useState(false);
+  return <section className="admin-card account-consent" aria-labelledby="account-consent-title">
+    <h2 id="account-consent-title">Early commencement of the course</h2>
+    {saved ? <p role="status">Your early commencement consent has been recorded.</p> : <>
+      <p className="muted small">If you wish to begin the course during your 14-day withdrawal period, please review and confirm the statement below.</p>
+      <form onSubmit={async e => { e.preventDefault(); if (!checked || busy) return; setBusy(true); setError(''); try { await api('auth/early-commencement', { earlyCommencementConsent: true, consentVersion: earlyCommencement.version }); setSaved(true); await refresh(); } catch (err) { if ((err as RequestError).code === 'unauthenticated') onAuth(); setError((err as Error).message); } finally { setBusy(false); } }}>
+        <label className="choice consent-choice"><input type="checkbox" checked={checked} onChange={e => setChecked(e.target.checked)} disabled={busy}/><span>{earlyCommencement.text}</span></label>
+        <button disabled={!checked || busy}>{busy ? 'Saving…' : 'Confirm early commencement'}</button><ErrorBox error={error}/>
+      </form>
+    </>}
+  </section>;
+}
+
 function PasswordForm({ refresh, onAuth, done, submitLabel, registration = false }: { refresh: () => Promise<void>; onAuth: () => void; done?: () => void; submitLabel: string; registration?: boolean }) {
   const [password,setPassword] = useState(''); const [repeat,setRepeat] = useState(''); const [shown,setShown] = useState(false);
   const [consented,setConsented] = useState(false);

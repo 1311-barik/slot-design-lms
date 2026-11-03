@@ -44,7 +44,7 @@ async function fromOutbox(event: Row, crowd: Awaited<ReturnType<typeof people>>)
       if (!c) return [];
       return crowd.admins.map(who => ({ key: key(who), kind: event.kind, recipient: who, link: '/',
         subject: `Early commencement consent: ${c.participant_name}`,
-        body: `${greet(who)}${c.participant_name} (${c.participant_email}) explicitly selected the early commencement checkbox during LMS registration.\n\nCourse: ${c.course_title}\nRecorded at (UTC): ${new Date(c.accepted_at).toISOString()}\nConsent version: ${c.consent_version}\nRecord: ${c.id}\n\nText accepted:\n${c.consent_text}\n\nThe original record is saved in the LMS. You can view it under People & course access.` }));
+        body: `${greet(who)}${c.participant_name} (${c.participant_email}) explicitly selected the early commencement checkbox ${c.source === 'lms_account' ? 'in their LMS account after registration' : 'during LMS registration'}.\n\nCourse: ${c.course_title}\nRecorded at (UTC): ${new Date(c.accepted_at).toISOString()}\nConsent version: ${c.consent_version}\nRecord: ${c.id}\n\nText accepted:\n${c.consent_text}\n\nThe original record is saved in the LMS. You can view it under People & course access.` }));
     }
     case 'submission.created': {
       const [s] = await sql`select s.*,w.assignment_id,w.module from lms.submissions s join lms.works w on w.id=s.work_id where s.id=${event.aggregate_id}`;

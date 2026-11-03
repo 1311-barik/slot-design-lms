@@ -91,10 +91,34 @@ async function startLocalSession(profileId: string) {
   await sql`insert into lms.dev_sessions values(${hash(session)},${profileId},now()+interval '8 hours')`;
   (await cookies()).set(cookieName, session, { httpOnly: true, sameSite: 'lax', secure: false, path: '/', maxAge: 8 * 3600 });
 }
+function checkConsentVersion(version: string) {
+  if (version !== earlyCommencement.version) throw new AppError('consent_version', 'The consent text has changed. Reload this page and review it again.', 409, ['earlyCommencementConsent']);
+}
+async function recordConsent(tx: Tx, profile: { id: string; name: string; email: string }, source: 'lms_registration' | 'lms_account') {
+  await tx`set local role lms_runtime`;
+  await tx`select set_config('app.actor',${profile.id},true)`;
+  const [record] = await tx`insert into lms.early_commencement_consents(owner_id,participant_name,participant_email,course_key,course_title,consent_version,consent_text,source)
+    values(${profile.id},${profile.name},${profile.email},${earlyCommencement.courseKey},${earlyCommencement.courseTitle},${earlyCommencement.version},${earlyCommencement.text},${source})
+    on conflict(owner_id,course_key) do nothing returning id`;
+  // Снимок и отбивка фиксируются вместе, повтор не создаёт второе письмо.
+  if (record) await tx`insert into lms.outbox(kind,aggregate_id) values('consent.early_commencement',${record.id})`;
+}
+// Согласие после регистрации: без смены пароля и без изменения исходной даты регистрации.
+export async function acceptEarlyCommencement(user: string, version: string) {
+  checkConsentVersion(version);
+  await sql.begin(async tx => {
+    await tx`select pg_advisory_xact_lock(hashtextextended(${user},0))`;
+    const [profile] = await tx`select id,name,email,role,password_set_at from lms.profiles where id=${user} and activated_at is not null and revoked_at is null and access_ends_at>now() for update`;
+    if (!profile) throw new AppError('access_expired', 'Course access is not active. Contact the administrator.', 403);
+    if (profile.role !== 'participant') throw new AppError('forbidden', 'This consent is available to course participants.', 403);
+    if (!profile.password_set_at) throw new AppError('password_required', 'Create your password to open the course.', 403);
+    await recordConsent(tx, { id: profile.id, name: profile.name, email: profile.email }, 'lms_account');
+  });
+}
 // Создать или сменить пароль может только вошедший пользователь; ссылка на почту остаётся запасным входом.
 export async function setPassword(user: string, password: string, consent?: { version: string }) {
   checkPassword(password);
-  if (consent && consent.version !== earlyCommencement.version) throw new AppError('consent_version', 'The consent text has changed. Reload this page and review it again.', 409, ['earlyCommencementConsent']);
+  if (consent) checkConsentVersion(consent.version);
   await sql.begin(async tx => {
     await tx`select pg_advisory_xact_lock(hashtextextended(${user},0))`;
     const [profile] = await tx`select * from lms.profiles where id=${user} and activated_at is not null and revoked_at is null and access_ends_at>now() for update`;
@@ -115,14 +139,7 @@ export async function setPassword(user: string, password: string, consent?: { ve
     await tx`with first as (select id from lms.profiles where id=${user} and password_set_at is null and role='participant')
       insert into lms.outbox(kind,aggregate_id) select 'participant.password', id from first on conflict do nothing`;
     await tx`update lms.profiles set password_set_at=coalesce(password_set_at,clock_timestamp()) where id=${user}`;
-    if (consent && !existing) {
-      await tx`set local role lms_runtime`;
-      await tx`select set_config('app.actor',${user},true)`;
-      const [record] = await tx`insert into lms.early_commencement_consents(owner_id,participant_name,participant_email,course_key,course_title,consent_version,consent_text)
-        values(${user},${profile.name},${profile.email},${earlyCommencement.courseKey},${earlyCommencement.courseTitle},${earlyCommencement.version},${earlyCommencement.text}) returning id`;
-      // Доказательство и событие для отбивки сохраняются одной транзакцией с завершением регистрации.
-      await tx`insert into lms.outbox(kind,aggregate_id) values('consent.early_commencement',${record.id})`;
-    }
+    if (consent && !existing) await recordConsent(tx, { id: user, name: profile.name, email: profile.email }, 'lms_registration');
   });
 }
 // Ответ один для неизвестного адреса и неверного пароля: не раскрываем, есть ли аккаунт.

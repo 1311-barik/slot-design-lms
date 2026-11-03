@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { actor, exchange, logout, passwordLogin, rateLimit, requestLink, setPassword } from '@/lib/auth';
+import { acceptEarlyCommencement, actor, exchange, logout, passwordLogin, rateLimit, requestLink, setPassword } from '@/lib/auth';
 import { command, isAdmin, readWorkspace } from '@/lib/service';
 import { runMail } from '@/lib/mail';
 import { ensureAuthUser } from '@/lib/supabase-admin';
@@ -118,6 +118,11 @@ async function handle(request: Request, context: Context) {
     }
     const user = await actor();
     requireSetupDone(await setupState(user));
+    if (path === 'auth/early-commencement') {
+      const input = z.object({ earlyCommencementConsent: z.literal(true), consentVersion: z.string().max(100) }).strict().parse(data);
+      await acceptEarlyCommencement(user, input.consentVersion);
+      return response({ ok: true });
+    }
     if (path === 'commands') {
       const payload = z.object({ action: z.string(), input: z.unknown() }).strict().parse(data);
       // Локальная кнопка «обработать почту сейчас» для демонстрации; в рабочей среде письма отправляет фоновый обработчик.

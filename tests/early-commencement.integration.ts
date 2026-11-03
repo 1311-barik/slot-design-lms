@@ -44,6 +44,21 @@ assert.equal(own.earlyCommencementConsents[0].consent_text, earlyCommencement.te
 assert.equal((await call('auth/password', { password, earlyCommencementConsent: false, consentVersion: earlyCommencement.version }, no.jar)).status, 200);
 assert.deepEqual((await call('workspace', undefined, no.jar)).body.earlyCommencementConsents, []);
 assert.equal((await call('auth/password', accepted, no.jar)).status, 409, 'no retroactive consent through password changes');
+const late = { earlyCommencementConsent: true, consentVersion: earlyCommencement.version };
+assert.equal((await call('auth/early-commencement', late)).status, 401);
+for (const payload of [{}, { ...late, earlyCommencementConsent: false }, { ...late, earlyCommencementConsent: 'true' }, { ...late, ownerId: yes.id }, { ...late, acceptedAt: '2000-01-01' }]) {
+  assert.equal((await call('auth/early-commencement', payload, no.jar)).status, 422);
+}
+assert.equal((await call('auth/early-commencement', { ...late, consentVersion: 'stale' }, no.jar)).status, 409);
+assert.equal((await call('auth/early-commencement', late, admin)).status, 403);
+const originalPasswordAt = (await call('workspace', undefined, no.jar)).body.me.password_set_at;
+assert.equal((await call('auth/early-commencement', late, no.jar)).status, 200);
+assert.equal((await call('auth/early-commencement', late, no.jar)).status, 200);
+const lateData = (await call('workspace', undefined, no.jar)).body;
+assert.equal(lateData.earlyCommencementConsents.length, 1);
+assert.equal(lateData.earlyCommencementConsents[0].source, 'lms_account');
+assert.equal(lateData.me.password_set_at, originalPasswordAt);
+assert.equal((await call('auth/password-login', { email: no.email, password })).status, 200, 'existing password is unchanged');
 const adminData = (await call('workspace', undefined, admin)).body;
 assert.equal(adminData.earlyCommencementConsents.filter((c: { owner_id: string }) => c.owner_id === yes.id).length, 1);
 let receipt: { status: string; body: string }[] = [];
@@ -56,4 +71,8 @@ for (let batch = 0; batch < 20; batch++) {
 assert.equal(receipt.length, 1);
 assert.equal(receipt[0].status, 'sent');
 assert.ok(receipt[0].body.includes(earlyCommencement.text));
+const lateReceipts = (await call('workspace', undefined, admin)).body.notifications.filter((n: { kind: string; body: string }) => n.kind === 'consent.early_commencement' && n.body.includes(no.email));
+assert.equal(lateReceipts.length, 1);
+assert.equal(lateReceipts[0].status, 'sent');
+assert.ok(lateReceipts[0].body.includes('after registration'));
 console.log('Consent HTTP integration passed: authentication, strict input, stale version, checked/unchecked registration, retries, privacy, admin receipt and local delivery.');

@@ -97,4 +97,5 @@ input,textarea,select{border-radius:10px}
 @media(max-width:640px){.session-card{background:linear-gradient(180deg,rgba(11,11,13,.55) 0%,var(--night) 55%),url(/brand/reels.jpg) center top/cover no-repeat,var(--night)}}
 
 /* Явное согласие: длинный текст переносится рядом с галочкой, вся подпись кликабельна. */
+.account-consent{margin-bottom:32px}.account-consent h2{margin-top:0}.account-consent form{display:grid;gap:16px}.account-consent button{justify-self:start;max-width:100%;white-space:normal}
 .early-commencement{margin:20px 0}.consent-choice{align-items:flex-start;flex-wrap:nowrap;font-size:15px;line-height:1.5}.consent-choice input{margin-top:3px}.consent-choice span{min-width:0;overflow-wrap:anywhere}.consent-evidence{margin-top:8px;max-width:640px;font-size:14px;overflow-wrap:anywhere}.consent-evidence summary{cursor:pointer;min-height:44px;display:flex;align-items:center;color:var(--primary)}.consent-evidence p{margin:8px 0}

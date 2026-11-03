@@ -1,7 +1,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { setPassword } from '../src/lib/auth';
+import { acceptEarlyCommencement, setPassword } from '../src/lib/auth';
 import { earlyCommencement } from '../src/lib/early-commencement';
 import { sql, transaction } from '../src/lib/db';
 import { command, readWorkspace } from '../src/lib/service';
@@ -96,5 +96,62 @@ test('failed receipt enqueue rolls back consent and registration; the next attem
     await sql.unsafe('drop function lms.test_reject_consent_event()');
   }
   await setPassword(id, 'Registration retry phrase', consent);
+  assert.equal((await sql`select id from lms.early_commencement_consents where owner_id=${id}`).length, 1);
+});
+
+test('an existing participant can consent later without changing their password; concurrent retries keep the first evidence and receipt', async () => {
+  const id = await participant();
+  await setPassword(id, 'Already registered learner');
+  const [before] = await sql`select p.password_set_at,d.hash from lms.profiles p join lms.dev_passwords d on d.profile_id=p.id where p.id=${id}`;
+  const acceptedAfter = Date.now();
+  await Promise.all([acceptEarlyCommencement(id, consent.version), acceptEarlyCommencement(id, consent.version)]);
+  const records = await sql`select * from lms.early_commencement_consents where owner_id=${id}`;
+  assert.equal(records.length, 1);
+  const record = records[0];
+  assert.equal(record.source, 'lms_account');
+  assert.equal(record.consent_text, earlyCommencement.text);
+  assert.equal(record.participant_email, `${id}@example.test`);
+  assert.ok(record.accepted_at.getTime() >= acceptedAfter);
+  await sql`update lms.profiles set name='Later profile name' where id=${id}`;
+  await acceptEarlyCommencement(id, consent.version);
+  assert.equal((await sql`select participant_name from lms.early_commencement_consents where owner_id=${id}`)[0].participant_name, 'Consent Learner');
+  assert.equal((await sql`select id from lms.outbox where kind='consent.early_commencement' and aggregate_id=${record.id}`).length, 1);
+  const [after] = await sql`select p.password_set_at,d.hash from lms.profiles p join lms.dev_passwords d on d.profile_id=p.id where p.id=${id}`;
+  assert.deepEqual(after, before);
+  await plan();
+  const receipts = await sql`select body from lms.notifications where kind='consent.early_commencement' and body like ${`%${record.id}%`}`;
+  assert.equal(receipts.length, 1);
+  assert.ok(receipts[0].body.includes('in their LMS account after registration'));
+  assert.ok(receipts[0].body.includes(record.accepted_at.toISOString()));
+});
+
+test('late consent requires an active registered participant and the current text; it cannot replace registration evidence', async () => {
+  const id = await participant();
+  await assert.rejects(acceptEarlyCommencement(id, consent.version), /Create your password/);
+  await setPassword(id, 'Existing participant password');
+  for (const version of ['', 'obsolete']) await assert.rejects(acceptEarlyCommencement(id, version), /consent text has changed/);
+  for (const staff of [admin, reviewer]) await assert.rejects(acceptEarlyCommencement(staff, consent.version), /available to course participants/);
+  assert.equal((await sql`select id from lms.early_commencement_consents where owner_id=${id}`).length, 0);
+  await sql`update lms.profiles set revoked_at=clock_timestamp() where id=${id}`;
+  await assert.rejects(acceptEarlyCommencement(id, consent.version), /access is not active/);
+  const registered = await participant();
+  await setPassword(registered, 'Original registration consent', consent);
+  await acceptEarlyCommencement(registered, consent.version);
+  assert.equal((await sql`select source from lms.early_commencement_consents where owner_id=${registered}`)[0].source, 'lms_registration');
+});
+
+test('a failed late-consent receipt rolls back evidence and allows a retry', async () => {
+  const id = await participant();
+  await setPassword(id, 'Late consent failure check');
+  await sql.unsafe("create function lms.test_reject_late_event() returns trigger language plpgsql as $$ begin if new.kind='consent.early_commencement' then raise exception 'synthetic late outbox failure'; end if; return new; end $$");
+  await sql.unsafe('create trigger test_reject_late_event before insert on lms.outbox for each row execute function lms.test_reject_late_event()');
+  try {
+    await assert.rejects(acceptEarlyCommencement(id, consent.version), /synthetic late outbox failure/);
+    assert.equal((await sql`select id from lms.early_commencement_consents where owner_id=${id}`).length, 0);
+  } finally {
+    await sql.unsafe('drop trigger test_reject_late_event on lms.outbox');
+    await sql.unsafe('drop function lms.test_reject_late_event()');
+  }
+  await acceptEarlyCommencement(id, consent.version);
   assert.equal((await sql`select id from lms.early_commencement_consents where owner_id=${id}`).length, 1);
 });
