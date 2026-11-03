@@ -7,6 +7,7 @@ import { appendFile, chmod, mkdtemp, mkdir, readFile, rename, rm, stat, writeFil
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 import postgres from 'postgres';
 
 const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
@@ -48,7 +49,20 @@ async function main() {
   const dbUrl = new URL(process.env.DATABASE_URL);
   const password = decodeURIComponent(dbUrl.password);
   dbUrl.password = '';
-  await run(pgDump, ['--dbname', dbUrl.toString(), '--format=custom', '--schema=lms', '--schema=auth', '--schema=storage', '--file', dbPath], { env: { ...process.env, PGPASSWORD: password } });
+  let dumpError;
+  let databaseAttempts = 0;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    databaseAttempts = attempt;
+    try {
+      await run(pgDump, ['--dbname', dbUrl.toString(), '--format=custom', '--schema=lms', '--schema=auth', '--schema=storage', '--file', dbPath], { env: { ...process.env, PGPASSWORD: password, PGCONNECT_TIMEOUT: '20' }, timeout: 240_000 });
+      dumpError = undefined;
+      break;
+    } catch (error) {
+      dumpError = error;
+      if (attempt < 3) { console.warn(`Database export attempt ${attempt} failed; retrying`); await delay(15_000 * attempt); }
+    }
+  }
+  if (dumpError) throw dumpError;
   await run(pgDump.replace(/pg_dump$/, 'pg_restore'), ['--list', dbPath]);
   const db = postgres(process.env.DATABASE_URL, { max: 1 });
   let objects;
@@ -102,7 +116,7 @@ async function main() {
       if (!process.env.LMS_BACKUP_SSH_KEY) throw new Error('Backup remote SSH key is not configured');
       await run('scp', ['-i', process.env.LMS_BACKUP_SSH_KEY, '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', output, `${process.env.LMS_BACKUP_REMOTE}/${stamp}.aesgcm`]);
     }
-    await writeFile(statusPath, JSON.stringify({ lastSuccess: new Date().toISOString(), archive: output, objects: files.length, bytes: (await stat(output)).size, remoteCopied: Boolean(process.env.LMS_BACKUP_REMOTE) }, null, 2), { mode: 0o600 });
+    await writeFile(statusPath, JSON.stringify({ lastSuccess: new Date().toISOString(), archive: output, objects: files.length, bytes: (await stat(output)).size, remoteCopied: Boolean(process.env.LMS_BACKUP_REMOTE), databaseAttempts }, null, 2), { mode: 0o600 });
     console.log(`Backup verified: ${output}; objects=${files.length}`);
   } finally {
     await rm(zipPath, { force: true });
