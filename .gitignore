@@ -47,6 +47,7 @@ docs/*
 docs/deployment/*
 !docs/deployment/nginx.conf.example
 !docs/deployment/nginx-http.conf.example
+!docs/deployment/nginx-log-format.conf.example
 !docs/deployment/slot-design-lms.service.example
 !docs/deployment/slot-design-lms-mail.service.example
 

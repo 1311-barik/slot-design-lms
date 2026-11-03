@@ -33,7 +33,7 @@ test('welcome email contains the recipient’s one-time link and no token is sto
   await drain(new Date(), mail.provider);
   const welcome = mail.sent.find(m => m.to === address && m.subject.startsWith('Welcome to Slot Design'));
   assert.ok(welcome);
-  assert.match(welcome.text, /Open your personal sign-in link:\nhttp:\/\/127\.0\.0\.1:8787\/\?token=[a-f0-9]{64}/);
+  assert.match(welcome.text, /Open your personal sign-in link:\nhttp:\/\/127\.0\.0\.1:8787\/#token=[a-f0-9]{64}/);
   assert.match(welcome.text, /create your password, and Module 0 will open/i);
   const [queued] = await byKey(`enrollment.invited:${id}:%`);
   assert.equal(queued.status, 'sent');
@@ -49,7 +49,7 @@ test('a replacement sign-in link uses the same mail worker and stays out of cour
   await deliver(new Date(Date.now() + 2_000), mail.provider);
   const sent = mail.sent.find(m => m.to === 'alex@example.test' && m.subject === 'Your Slot Design sign-in link');
   assert.ok(sent);
-  assert.match(sent.text, /\?token=[a-f0-9]{64}/);
+  assert.match(sent.text, /\/#token=[a-f0-9]{64}/);
   assert.ok(!(await readWorkspace(learner)).notifications.some((n: { dedupe_key: string }) => n.dedupe_key === key));
   const [queued] = await sql`select body,status from lms.notifications where dedupe_key=${key}`;
   assert.equal(queued.status, 'sent');

@@ -87,7 +87,8 @@ test('sessions: end after start, recording hidden until published, editing by ad
   assert.equal(find((await readWorkspace(learner)).sessions, id)!.recording_url, null);
   await command(admin, 'session.save', { ...input, expectedRevision: saved.revision, recordingPublished: true });
   assert.equal(find((await readWorkspace(learner)).sessions, id)!.recording_url, 'https://example.test/rec');
-  assert.equal((await readWorkspace(learner)).sessions.filter((x: { module: number; title: string }) => x.module >= 1 && x.module <= 7 && x.title.startsWith('Live session')).length, 7, 'seeded calendar: seven Sundays');
+  const seeded = (await readWorkspace(learner)).sessions.filter((x: { module: number; title: string }) => x.module >= 1 && x.module <= 7 && x.title.startsWith('Live session'));
+  assert.deepEqual(seeded.map((x: { module: number }) => x.module), [1, 2, 3, 4, 5, 6], 'seeded calendar: six classes; January pitch awaits a date');
 });
 
 test('assignment dates and publication are edited by the administrator; unpublishing keeps work', async () => {

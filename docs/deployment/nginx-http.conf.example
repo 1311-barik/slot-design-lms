@@ -2,6 +2,7 @@
 server {
     listen 80;
     server_name lms.example.org;
+    access_log /var/log/nginx/slot-design-lms-access.log slot_design_safe;
     location ^~ /.well-known/acme-challenge/ { root /var/www/letsencrypt; }
     location / { return 503; }
 }

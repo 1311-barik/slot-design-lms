@@ -15,7 +15,7 @@ async function login(email:string) {
   const response=await call('auth/link',{email}); assert.equal(response.status,202);
   const link=(await response.json()).localLink; assert.ok(link);
   assert.equal((await fetch(link)).status,200,'opening the email URL must not consume the token');
-  const token=new URL(link).searchParams.get('token');
+  const token=new URLSearchParams(new URL(link).hash.slice(1)).get('token');
   const exchange=await call('auth/exchange',{token}); assert.equal(exchange.status,200);
   assert.equal((await call('auth/exchange',{token})).status,401);
   return exchange.headers.get('set-cookie')!.split(';')[0];

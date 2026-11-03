@@ -52,9 +52,9 @@ try {
   log(`assignments: ${added} added, ${courseAssignments.length - added} already present (unpublished until the administrator publishes them)`);
   const [sessions] = await sql`select count(*)::int as n from lms.sessions`;
   if (!sessions.n) {
-    // Календарь потока: семь воскресений с 15 ноября 2026, 15:00 CET; окончание не задано. Даты правятся в Course content.
-    for (let module = 1; module <= 7; module++) await sql`insert into lms.sessions(id,module,title,starts_at) values(gen_random_uuid(),${module},${`Live session · Module ${module}`},${new Date(Date.UTC(2026, 10, 15 + (module - 1) * 7, 14))})`;
-    log('sessions: seven Sundays from 15 November 2026, 15:00 CET');
+    // Календарь потока: шесть воскресений с 15 ноября по 20 декабря 2026, 15:00 CET. Январский питч добавляется после утверждения даты.
+    for (let module = 1; module <= 6; module++) await sql`insert into lms.sessions(id,module,title,starts_at) values(gen_random_uuid(),${module},${`Live session · Module ${module}`},${new Date(Date.UTC(2026, 10, 15 + (module - 1) * 7, 14))})`;
+    log('sessions: six Sundays from 15 November to 20 December 2026, 15:00 CET; January pitch pending');
   } else log(`sessions: ${sessions.n} already present, not changed`);
 
   for (const admin of options('--admin')) await person(admin[0], admin[1], 'admin');

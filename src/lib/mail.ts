@@ -213,7 +213,7 @@ export function mailProvider(): Provider | null {
   return null;
 }
 
-// Одноразовая ссылка создаётся непосредственно перед отправкой: в БД и журналах её нет.
+// Фрагмент URL не отправляется серверу при открытии письма и не попадает в access log.
 async function welcomeLink(email: string) {
   if (config().mode === 'local') {
     const result = await requestLink(email);
@@ -223,7 +223,7 @@ async function welcomeLink(email: string) {
   const { data, error } = await serviceClient().auth.admin.generateLink({ type: 'magiclink', email });
   const token = data?.properties?.hashed_token;
   if (error || !token) throw new Error('Invitation link could not be generated.');
-  return `${config().origin}/?token=${encodeURIComponent(token)}`;
+  return `${config().origin}/#token=${encodeURIComponent(token)}`;
 }
 
 export async function deliver(now = new Date(), provider = mailProvider()) {

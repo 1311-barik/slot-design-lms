@@ -2,15 +2,20 @@
 server {
     listen 80;
     server_name lms.example.org;
+    access_log /var/log/nginx/slot-design-lms-access.log slot_design_safe;
     location ^~ /.well-known/acme-challenge/ { root /var/www/letsencrypt; }
     location / { return 301 https://$host$request_uri; }
 }
 server {
     listen 443 ssl;
     server_name lms.example.org;
+    access_log /var/log/nginx/slot-design-lms-access.log slot_design_safe;
     ssl_certificate /etc/letsencrypt/live/lms.example.org/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/lms.example.org/privkey.pem;
     client_max_body_size 51m;
+    add_header Strict-Transport-Security "max-age=86400" always;
+    add_header Content-Security-Policy-Report-Only "default-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'" always;
+    add_header X-Content-Type-Options nosniff always;
     location / {
         proxy_pass http://127.0.0.1:8787;
         proxy_http_version 1.1;

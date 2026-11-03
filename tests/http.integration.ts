@@ -7,7 +7,7 @@ async function call(path: string, body?: unknown, cookie = '') {
 }
 async function login(email: string) {
   const response = await call('auth/link',{email}); assert.equal(response.status,202);
-  const token = new URL((await response.json()).localLink).searchParams.get('token');
+  const token = new URLSearchParams(new URL((await response.json()).localLink).hash.slice(1)).get('token');
   const exchange = await call('auth/exchange',{token}); assert.equal(exchange.status,200);
   assert.equal((await call('auth/exchange',{token})).status,401,'one-time token');
   return exchange.headers.get('set-cookie')!.split(';')[0];

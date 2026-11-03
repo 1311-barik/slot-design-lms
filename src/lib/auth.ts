@@ -36,7 +36,7 @@ export async function requestLink(email: string) {
     if (!email.endsWith('@example.test')) return generic;
     const token = randomBytes(32).toString('hex');
     await sql`insert into lms.dev_tokens(hash,profile_id,expires_at) values(${hash(token)},${profile.id},now()+interval '15 minutes')`;
-    return { ...generic, localLink: `${cfg.origin}/?token=${token}`, localEmail: email };
+    return { ...generic, localLink: `${cfg.origin}/#token=${token}`, localEmail: email };
   }
   // Повторный вход и восстановление идут через тот же корпоративный SMTP, что и первое приглашение.
   // Токен генерирует обработчик непосредственно перед отправкой, не хранит в БД и не раскрывает через API.

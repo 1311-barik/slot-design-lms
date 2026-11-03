@@ -64,6 +64,8 @@ sudoedit /etc/slot-design-lms/env
 
 `SUPABASE_ANON_KEY` — публичный anon/publishable key. `SUPABASE_SERVICE_ROLE_KEY` — серверный service_role/secret key, никогда не `NEXT_PUBLIC_*`. Приватный бакет указан в `SUPABASE_STORAGE_BUCKET`. В файле окружения использовать простой `NAME=value`, без `export` и команд shell; не выполнять его через `source`. `MAIL_PROVIDER` пока пустой. Реальный файл не хранить в клоне Git.
 
+До запуска загрузок установить `clamav-daemon` и `clamav-freshclam`, дождаться обновления баз. В `/etc/clamav/clamd.conf` задать `LocalSocketMode 660`, `StreamMaxLength 60M`, `MaxFileSize 60M`; добавить системного пользователя `lms` в группу `clamav`, включить `clamav-daemon.service` и `clamav-freshclam.service`, затем перезапустить LMS. В runtime env указать `CLAMAV_SOCKET=/var/run/clamav/clamd.ctl`. Без сканера или при его сбое рабочая LMS отклоняет загрузку; вход и чтение материалов продолжают работать. Проверить чистый файл и стандартный EICAR-образец через `clamdscan --stream` перед приглашением участников. Не открывать TCP-порт сканера наружу.
+
 ### Ветка A: существующий Supabase — перенос текущей LMS
 
 Получить значения через защищённый канал от владельца, изменить только публичный адрес и локальный runtime-каталог. Сохранить прежний Supabase project ref и бакет. Не запускать `db:setup` и не загружать seed. Данные уже находятся в Supabase. При той же версии миграций административный пароль для запуска не нужен.
@@ -81,7 +83,7 @@ sudo install -m 0600 .env.admin.example /etc/slot-design-lms/admin.env
 sudoedit /etc/slot-design-lms/admin.env
 ```
 
-Заполнить те же значения проекта, но `DATABASE_URL` с ролью **postgres**, а не `lms_backend`. Выбрать настоящий email первого администратора и срок его доступа; адреса ниже — примеры. Подготовка создаст схему, приватный бакет, неопубликованные задания, семь встреч курса и указанный административный аккаунт. Писем не отправляет. Реальных пользователей и работы со старого проекта не копирует.
+Заполнить те же значения проекта, но `DATABASE_URL` с ролью **postgres**, а не `lms_backend`. Выбрать настоящий email первого администратора и срок его доступа; адреса ниже — примеры. Подготовка создаст схему, приватный бакет, неопубликованные задания, шесть подтверждённых встреч курса и указанный административный аккаунт. Январский питч добавляется после утверждения даты. Писем не отправляет. Реальных пользователей и работы со старого проекта не копирует.
 
 ```sh
 sudo /opt/slot-design-node/bin/node --env-file=/etc/slot-design-lms/admin.env --import tsx scripts/supabase-setup.ts \
@@ -132,6 +134,10 @@ bash scripts/deploy.sh https://lms.example.org
 
 ```sh
 sudo install -d -m 0755 /var/www/letsencrypt
+sudo touch /var/log/nginx/slot-design-lms-access.log
+sudo chown www-data:adm /var/log/nginx/slot-design-lms-access.log
+sudo chmod 0640 /var/log/nginx/slot-design-lms-access.log
+sudo install -m 0644 docs/deployment/nginx-log-format.conf.example /etc/nginx/conf.d/slot-design-lms-log-format.conf
 sudo install -m 0644 docs/deployment/nginx-http.conf.example /etc/nginx/sites-available/slot-design-lms
 sudoedit /etc/nginx/sites-available/slot-design-lms
 sudo ln -s /etc/nginx/sites-available/slot-design-lms /etc/nginx/sites-enabled/slot-design-lms
@@ -157,7 +163,7 @@ sudo systemctl status certbot.timer --no-pager
 
 - Site URL: `https://lms.example.org/`.
 - Redirect URLs: точные `https://lms.example.org` и `https://lms.example.org/`. Во время переноса прежний рабочий адрес оставить до окончания проверки; localhost убрать из рабочего списка.
-- Настроить SMTP LMS для приглашений, повторных ссылок входа и учебных уведомлений. Сервер генерирует одноразовую ссылку через Supabase Auth перед отправкой, поэтому она работает в браузере получателя. Старые письма после смены `APP_ORIGIN` не использовать.
+- Настроить SMTP LMS для приглашений, повторных ссылок входа и учебных уведомлений. Сервер генерирует одноразовую ссылку через Supabase Auth перед отправкой, поэтому она работает в браузере получателя. Старые письма после смены `APP_ORIGIN` не использовать. Новые ссылки несут токен во фрагменте `#token=…`, который браузер не посылает в GET-запросе. Формат журнала LMS записывает путь без query string и без Referrer; не заменять его стандартным `combined`, пока действуют старые письма с `?token=…`.
 
 Проверить с внешнего компьютера:
 
