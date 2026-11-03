@@ -42,9 +42,10 @@ async function fromOutbox(event: Row, crowd: Awaited<ReturnType<typeof people>>)
     case 'consent.early_commencement': {
       const [c] = await sql`select * from lms.early_commencement_consents where id=${event.aggregate_id}`;
       if (!c) return [];
+      const terms = c.terms_url ? `\nTerms and Conditions: ${config().origin}${c.terms_url}\nPDF SHA-256: ${c.terms_sha256}\n` : '';
       return crowd.admins.map(who => ({ key: key(who), kind: event.kind, recipient: who, link: '/',
         subject: `Early commencement consent: ${c.participant_name}`,
-        body: `${greet(who)}${c.participant_name} (${c.participant_email}) explicitly selected the early commencement checkbox ${c.source === 'lms_account' ? 'in their LMS account after registration' : 'during LMS registration'}.\n\nCourse: ${c.course_title}\nRecorded at (UTC): ${new Date(c.accepted_at).toISOString()}\nConsent version: ${c.consent_version}\nRecord: ${c.id}\n\nText accepted:\n${c.consent_text}\n\nThe original record is saved in the LMS. You can view it under People & course access.` }));
+        body: `${greet(who)}${c.participant_name} (${c.participant_email}) explicitly selected the early commencement checkbox ${c.source === 'lms_account' ? 'in their LMS account after registration' : 'during LMS registration'}.\n\nCourse: ${c.course_title}\nRecorded at (UTC): ${new Date(c.accepted_at).toISOString()}\nConsent version: ${c.consent_version}\nRecord: ${c.id}${terms}\n\nText accepted:\n${c.consent_text}\n\nThe original record is saved in the LMS. You can view it under People & course access.` }));
     }
     case 'submission.created': {
       const [s] = await sql`select s.*,w.assignment_id,w.module from lms.submissions s join lms.works w on w.id=s.work_id where s.id=${event.aggregate_id}`;

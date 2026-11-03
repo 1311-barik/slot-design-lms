@@ -1,6 +1,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { acceptEarlyCommencement, setPassword } from '../src/lib/auth';
 import { earlyCommencement } from '../src/lib/early-commencement';
 import { sql, transaction } from '../src/lib/db';
@@ -45,6 +46,8 @@ test('consent is an immutable identity/text/time snapshot; concurrent retries pr
   assert.equal(record.course_title, earlyCommencement.courseTitle);
   assert.equal(record.course_key, earlyCommencement.courseKey);
   assert.equal(record.source, 'lms_registration');
+  assert.equal(record.terms_url, earlyCommencement.termsUrl);
+  assert.equal(record.terms_sha256, earlyCommencement.termsSha256);
   assert.ok(record.accepted_at.getTime() >= before && record.accepted_at.getTime() <= Date.now());
   assert.equal((await sql`select id from lms.outbox where kind='consent.early_commencement' and aggregate_id=${record.id}`).length, 1);
   for (const operation of [() => sql`update lms.early_commencement_consents set consent_text='Changed' where id=${record.id}`, () => sql`delete from lms.early_commencement_consents where id=${record.id}`]) await assert.rejects(operation);
@@ -60,7 +63,7 @@ test('consent is an immutable identity/text/time snapshot; concurrent retries pr
   const receipts = sent.filter(m => m.text.includes(record.id));
   assert.equal(receipts.length, 1);
   assert.equal(receipts[0].to, 'admin@example.test');
-  for (const text of [record.participant_name, record.participant_email, earlyCommencement.text, consent.version, record.accepted_at.toISOString()]) assert.ok(receipts[0].text.includes(text));
+  for (const text of [record.participant_name, record.participant_email, earlyCommencement.text, consent.version, record.accepted_at.toISOString(), earlyCommencement.termsUrl, earlyCommencement.termsSha256]) assert.ok(receipts[0].text.includes(text));
 });
 
 test('only the owner and administrator can read consent; backend can read but cannot alter evidence or choose its timestamp', async () => {
@@ -125,9 +128,8 @@ test('an existing participant can consent later without changing their password;
   assert.ok(receipts[0].body.includes(record.accepted_at.toISOString()));
 });
 
-test('late consent requires an active registered participant and the current text; it cannot replace registration evidence', async () => {
+test('consent requires an active participant and current text, and can precede password setup; it cannot replace registration evidence', async () => {
   const id = await participant();
-  await assert.rejects(acceptEarlyCommencement(id, consent.version), /Create your password/);
   await setPassword(id, 'Existing participant password');
   for (const version of ['', 'obsolete']) await assert.rejects(acceptEarlyCommencement(id, version), /consent text has changed/);
   for (const staff of [admin, reviewer]) await assert.rejects(acceptEarlyCommencement(staff, consent.version), /available to course participants/);
@@ -135,9 +137,17 @@ test('late consent requires an active registered participant and the current tex
   await sql`update lms.profiles set revoked_at=clock_timestamp() where id=${id}`;
   await assert.rejects(acceptEarlyCommencement(id, consent.version), /access is not active/);
   const registered = await participant();
-  await setPassword(registered, 'Original registration consent', consent);
+  await acceptEarlyCommencement(registered, consent.version);
+  assert.equal((await sql`select password_set_at from lms.profiles where id=${registered}`)[0].password_set_at, null);
+  await setPassword(registered, 'Original registration consent');
   await acceptEarlyCommencement(registered, consent.version);
   assert.equal((await sql`select source from lms.early_commencement_consents where owner_id=${registered}`)[0].source, 'lms_registration');
+});
+
+test('the linked terms document matches the immutable PDF fingerprint saved with consent', async () => {
+  const pdf = await readFile(new URL(`../public${earlyCommencement.termsUrl}`, import.meta.url));
+  assert.ok(pdf.subarray(0,5).equals(Buffer.from('%PDF-')));
+  assert.equal(createHash('sha256').update(pdf).digest('hex'), earlyCommencement.termsSha256);
 });
 
 test('a failed late-consent receipt rolls back evidence and allows a retry', async () => {

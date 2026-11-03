@@ -97,5 +97,7 @@ input,textarea,select{border-radius:10px}
 @media(max-width:640px){.session-card{background:linear-gradient(180deg,rgba(11,11,13,.55) 0%,var(--night) 55%),url(/brand/reels.jpg) center top/cover no-repeat,var(--night)}}
 
 /* Явное согласие: длинный текст переносится рядом с галочкой, вся подпись кликабельна. */
+.login-consent{min-width:0;padding:16px}.login-consent .consent-choice{font-size:14px;line-height:1.45}.login-consent .consent-choice span{font-weight:400}.terms-link{overflow-wrap:anywhere;line-height:1.5}.terms-link a{color:var(--primary);text-decoration:underline}.team-sign-in{margin-top:12px}.consent-gate{max-width:780px}.consent-gate>.small{padding:0 8px}
+.login-card{max-width:620px}.login-card .brand{margin-bottom:28px}.login-card form{margin-top:20px}.consent-gate{display:block;margin:0 auto;padding-top:60px}.consent-gate .account-consent{max-width:none}
 .account-consent{margin-bottom:32px}.account-consent h2{margin-top:0}.account-consent form{display:grid;gap:16px}.account-consent button{justify-self:start;max-width:100%;white-space:normal}
 .early-commencement{margin:20px 0}.consent-choice{align-items:flex-start;flex-wrap:nowrap;font-size:15px;line-height:1.5}.consent-choice input{margin-top:3px}.consent-choice span{min-width:0;overflow-wrap:anywhere}.consent-evidence{margin-top:8px;max-width:640px;font-size:14px;overflow-wrap:anywhere}.consent-evidence summary{cursor:pointer;min-height:44px;display:flex;align-items:center;color:var(--primary)}.consent-evidence p{margin:8px 0}

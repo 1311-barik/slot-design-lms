@@ -97,8 +97,8 @@ function checkConsentVersion(version: string) {
 async function recordConsent(tx: Tx, profile: { id: string; name: string; email: string }, source: 'lms_registration' | 'lms_account') {
   await tx`set local role lms_runtime`;
   await tx`select set_config('app.actor',${profile.id},true)`;
-  const [record] = await tx`insert into lms.early_commencement_consents(owner_id,participant_name,participant_email,course_key,course_title,consent_version,consent_text,source)
-    values(${profile.id},${profile.name},${profile.email},${earlyCommencement.courseKey},${earlyCommencement.courseTitle},${earlyCommencement.version},${earlyCommencement.text},${source})
+  const [record] = await tx`insert into lms.early_commencement_consents(owner_id,participant_name,participant_email,course_key,course_title,consent_version,consent_text,source,terms_url,terms_sha256,terms_effective_date)
+    values(${profile.id},${profile.name},${profile.email},${earlyCommencement.courseKey},${earlyCommencement.courseTitle},${earlyCommencement.version},${earlyCommencement.text},${source},${earlyCommencement.termsUrl},${earlyCommencement.termsSha256},${earlyCommencement.termsEffectiveDate})
     on conflict(owner_id,course_key) do nothing returning id`;
   // Снимок и отбивка фиксируются вместе, повтор не создаёт второе письмо.
   if (record) await tx`insert into lms.outbox(kind,aggregate_id) values('consent.early_commencement',${record.id})`;
@@ -111,8 +111,7 @@ export async function acceptEarlyCommencement(user: string, version: string) {
     const [profile] = await tx`select id,name,email,role,password_set_at from lms.profiles where id=${user} and activated_at is not null and revoked_at is null and access_ends_at>now() for update`;
     if (!profile) throw new AppError('access_expired', 'Course access is not active. Contact the administrator.', 403);
     if (profile.role !== 'participant') throw new AppError('forbidden', 'This consent is available to course participants.', 403);
-    if (!profile.password_set_at) throw new AppError('password_required', 'Create your password to open the course.', 403);
-    await recordConsent(tx, { id: profile.id, name: profile.name, email: profile.email }, 'lms_account');
+    await recordConsent(tx, { id: profile.id, name: profile.name, email: profile.email }, profile.password_set_at ? 'lms_account' : 'lms_registration');
   });
 }
 // Создать или сменить пароль может только вошедший пользователь; ссылка на почту остаётся запасным входом.

@@ -8,16 +8,19 @@ import { AppError } from '@/lib/contract';
 import { config } from '@/lib/config';
 import { downloadFile, playVideo, uploadFile } from '@/lib/files';
 import { sql } from '@/lib/db';
+import { earlyCommencement } from '@/lib/early-commencement';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 type Context = { params: Promise<{ path: string[] }> };
 const response = (value: unknown, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store' } });
 async function setupState(user: string) {
-  const [profile] = await sql`select id,name,email,role,password_set_at,activated_at,revoked_at,access_ends_at from lms.profiles where id=${user}`;
+  const [profile] = await sql`select id,name,email,role,password_set_at,activated_at,revoked_at,access_ends_at,
+    exists(select 1 from lms.early_commencement_consents c where c.owner_id=p.id and c.course_key=${earlyCommencement.courseKey}) as consent_recorded from lms.profiles p where id=${user}`;
   if (!profile || !profile.activated_at || profile.revoked_at || new Date(profile.access_ends_at) <= new Date()) throw new AppError('access_expired', 'Course access is not active. Contact the administrator.', 403);
-  return profile as { role: string; password_set_at: Date | null; [key: string]: unknown };
+  return profile as { role: string; password_set_at: Date | null; consent_recorded: boolean; [key: string]: unknown };
 }
-const requireSetupDone = (profile: { role: string; password_set_at: Date | null }) => {
+const requireSetupDone = (profile: { role: string; password_set_at: Date | null; consent_recorded: boolean }) => {
+  if (profile.role === 'participant' && !profile.consent_recorded) throw new AppError('consent_required', 'Confirm early commencement before opening the course.', 403);
   if (profile.role === 'participant' && !profile.password_set_at) throw new AppError('password_required', 'Create your password to open the course.', 403);
 };
 async function limitedBody(request: Request, limit: number) {
@@ -42,7 +45,8 @@ async function handle(request: Request, context: Context) {
     if (path === 'config') return response({ local: cfg.mode === 'local' });
     const user = await actor();
     const profile = await setupState(user);
-    if (path === 'workspace') return response(profile.role === 'participant' && !profile.password_set_at ? { me: profile } : await readWorkspace(user));
+    if (path === 'workspace') return response(profile.role === 'participant' && (!profile.password_set_at || !profile.consent_recorded)
+      ? { me: profile, earlyCommencementConsents: [], consentRequired: !profile.consent_recorded } : await readWorkspace(user));
     requireSetupDone(profile);
     if (/^files\/[\da-f-]+\/captions$/.test(path)) {
       const { file, bytes } = await downloadFile(user, path.split('/')[1]);
@@ -117,12 +121,12 @@ async function handle(request: Request, context: Context) {
       await setPassword(user, input.password, input.earlyCommencementConsent === true ? { version: input.consentVersion || '' } : undefined); return response({ ok: true });
     }
     const user = await actor();
-    requireSetupDone(await setupState(user));
     if (path === 'auth/early-commencement') {
       const input = z.object({ earlyCommencementConsent: z.literal(true), consentVersion: z.string().max(100) }).strict().parse(data);
       await acceptEarlyCommencement(user, input.consentVersion);
       return response({ ok: true });
     }
+    requireSetupDone(await setupState(user));
     if (path === 'commands') {
       const payload = z.object({ action: z.string(), input: z.unknown() }).strict().parse(data);
       // Локальная кнопка «обработать почту сейчас» для демонстрации; в рабочей среде письма отправляет фоновый обработчик.

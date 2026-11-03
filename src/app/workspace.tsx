@@ -5,7 +5,7 @@ import { modules } from '@/lib/course';
 import { earlyCommencement } from '@/lib/early-commencement';
 
 type Row = { id: string; [key: string]: any };
-type Data = { me: Row; assignments: Row[]; works: Row[]; drafts: Row[]; submissions: Row[]; reviews: Row[]; reviewDrafts: Row[]; files: Row[]; people: Row[]; project: Row | null; packageItems: Row[]; questions: Row[]; answers: Row[]; materials: Row[]; materialFiles: Row[]; progress: Row[]; sessions: Row[]; now: string; presentations: Row[]; reviewers: Row[]; notifications: Row[]; feedback: Row[]; earlyCommencementConsents: Row[]; projects: Row[]; mail: { provider: string | null } | null };
+type Data = { consentRequired?: boolean; me: Row; assignments: Row[]; works: Row[]; drafts: Row[]; submissions: Row[]; reviews: Row[]; reviewDrafts: Row[]; files: Row[]; people: Row[]; project: Row | null; packageItems: Row[]; questions: Row[]; answers: Row[]; materials: Row[]; materialFiles: Row[]; progress: Row[]; sessions: Row[]; now: string; presentations: Row[]; reviewers: Row[]; notifications: Row[]; feedback: Row[]; earlyCommencementConsents: Row[]; projects: Row[]; mail: { provider: string | null } | null };
 type Tab = 'main' | 'questions' | 'content' | 'journal' | 'presentations' | 'email' | 'feedback' | 'activity';
 type QueueFilter = { assignment: string; status: string; overdue: boolean };
 type JournalFilter = { module: string; assignment: string; status: string; reviewer: string; late: boolean };
@@ -68,6 +68,8 @@ function nextStep(assignment: Row | undefined, work: Row | undefined, draft: Row
 function SignIn({ local, onSuccess, reauth = false }: { local: boolean; onSuccess: () => void; reauth?: boolean }) {
   const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [message, setMessage] = useState(''); const [link, setLink] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   const [token, setToken] = useState('');
+  const [consented, setConsented] = useState(false); const [team, setTeam] = useState(reauth);
+  const mayEnter = consented || team;
   // Новые письма несут token во фрагменте URL; query остаётся для уже отправленных ссылок.
   // code — стандартное письмо Supabase (PKCE). Ссылка тратится только после нажатия Continue.
   useEffect(() => {
@@ -77,23 +79,39 @@ function SignIn({ local, onSuccess, reauth = false }: { local: boolean; onSucces
     if (params.get('error') || hash.get('error')) setError('This sign-in link is invalid or expired. Request a new link.');
     if (value || code || params.get('error') || hash.get('error')) history.replaceState(null, '', '/');
   }, []);
-  async function enter(value: string) { setBusy(true); setError(''); try { await api('auth/exchange', value.startsWith('code:') ? (([code, flowId]) => flowId ? { code, flowId } : { code })(value.slice(5).split(':')) : { token: value }); onSuccess(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }
+  async function signIn(authenticate: () => Promise<unknown>) {
+    if (!mayEnter || busy) return;
+    setBusy(true); setError(''); let authenticated = false;
+    try {
+      await authenticate(); authenticated = true;
+      // Галочка связывается с человеком только после проверки его пароля или одноразовой ссылки.
+      const next = await api('workspace');
+      if (next.me.role === 'participant' && next.consentRequired && consented) await api('auth/early-commencement', { earlyCommencementConsent: true, consentVersion: earlyCommencement.version });
+      onSuccess();
+    } catch (e) {
+      // После сбоя записи открывается только закрытый экран согласия; курс сервер не отдаёт.
+      if (authenticated) onSuccess(); else setError((e as Error).message);
+    } finally { setBusy(false); }
+  }
+  async function enter(value: string) { await signIn(() => api('auth/exchange', value.startsWith('code:') ? (([code, flowId]) => flowId ? { code, flowId } : { code })(value.slice(5).split(':')) : { token: value })); }
   return <div className={reauth ? 'reauth' : 'login-shell'}><section className="login-card">
     <div className="brand"><img className="brand-logo" src="/brand/talentgrator.png" alt="Talentgrator" width={72} height={44}/><span>Slot design</span></div>
     <p className="eyebrow">FROM IDEA TO RELEASE</p><h1>{reauth ? 'Sign in to continue' : 'A space to build your next idea.'}</h1>
     <p className="muted">Your course, work in progress and expert feedback, together.</p>
-    {token ? <><p>Continue to open your course. This link can be used once.</p><button disabled={busy} onClick={() => enter(token)}>Continue to course</button></> : <>
-      <form onSubmit={async e => { e.preventDefault(); setBusy(true); setError(''); try { await api('auth/password-login', { email, password }); onSuccess(); } catch (err) { setError((err as Error).message); } finally { setBusy(false); } }}>
+    {!team && <fieldset className="early-commencement login-consent"><legend>Before you enter the course</legend><p className="small muted">Please review the Terms and Conditions and confirm early commencement. Confirmation is required for course access.</p><ConsentChoice checked={consented} change={setConsented} busy={busy}/></fieldset>}
+    {token ? <><p>Continue to open your course. This link can be used once.</p><button disabled={busy || !mayEnter} onClick={() => enter(token)}>Continue to course</button></> : <>
+      <form onSubmit={async e => { e.preventDefault(); await signIn(() => api('auth/password-login', { email, password })); }}>
         <label htmlFor="email">Email address</label><input id="email" type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} required placeholder="you@example.com" />
         <label htmlFor="password">Password</label><input id="password" type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required />
-        <button className="full" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+        <button className="full" disabled={busy || !mayEnter}>{busy ? 'Signing in…' : 'Sign in'}</button>
       </form>
       {/* Первый вход и забытый пароль — ссылка на почту. */}
-      <div className="link-sign-in"><p className="small">First time here or forgot your password?</p><button className="secondary full" disabled={busy || !email} onClick={async () => { setBusy(true); setError(''); setLink(''); try { const r = await api('auth/link', { email }); setMessage(r.message); setLink(r.localLink || ''); } catch (err) { setError((err as Error).message); } finally { setBusy(false); } }}>{busy ? 'Requesting link…' : 'Email me a sign-in link'}</button>{!email && <p className="muted small">Enter your email address above first.</p>}</div>
+      <div className="link-sign-in"><p className="small">First time here or forgot your password?</p><button className="secondary full" disabled={busy || !email || !mayEnter} onClick={async () => { setBusy(true); setError(''); setLink(''); try { const r = await api('auth/link', { email }); setMessage(r.message); setLink(r.localLink || ''); } catch (err) { setError((err as Error).message); } finally { setBusy(false); } }}>{busy ? 'Requesting link…' : 'Email me a sign-in link'}</button>{!email && <p className="muted small">Enter your email address above first.</p>}</div>
     </>}
     <p className="muted small">Access is by invitation.</p><ErrorBox error={error} />
+    <button className="text-button team-sign-in" disabled={busy} onClick={() => { setTeam(!team); setConsented(false); setError(''); }}>{team ? 'Return to participant sign-in' : 'Course team sign-in'}</button>{team && <TermsLink/>}
     {message && <p role="status">{message}</p>}
-    {local && <div className="test-mail"><strong>Local test mailbox</strong><p>Use alex@example.test (participant), expert@example.test or admin@example.test. No real email is sent.</p>{link && <button className="secondary" onClick={() => enter(new URLSearchParams(new URL(link).hash.slice(1)).get('token')!)} disabled={busy}>Open test sign-in link</button>}</div>}
+    {local && <div className="test-mail"><strong>Local test mailbox</strong><p>Use alex@example.test (participant), expert@example.test or admin@example.test. No real email is sent.</p>{link && <button className="secondary" onClick={() => enter(new URLSearchParams(new URL(link).hash.slice(1)).get('token')!)} disabled={busy || !mayEnter}>Open test sign-in link</button>}</div>}
   </section><aside className="login-aside"><p>Explore the idea.<br/>Make the choices.<br/><em>Build the concept.</em></p><small>Live sessions on Sundays, 15:00 CET · 15 November–20 December 2026<br/>Final pitch in January 2027 · Europe/Berlin</small></aside></div>;
 }
 
@@ -111,7 +129,7 @@ export default function Workspace() {
   const [data, setData] = useState<Data | null>(null); const [local, setLocal] = useState(false); const [loading, setLoading] = useState(true); const [error, setError] = useState(''); const [module, setModule] = useState(1); const [reauth, setReauth] = useState(false); const [activeReview, setActiveReview] = useState(''); const [dirty, setDirty] = useState(false); const [staffTab, setStaffTab] = useState<Tab>('main'); const [account, setAccount] = useState(false); const [feedback, setFeedback] = useState(false);
   const [queueFilter, setQueueFilter] = useState<QueueFilter>({ assignment: '', status: 'waiting', overdue: false }); const [journalFilter, setJournalFilter] = useState<JournalFilter>({ module: '', assignment: '', status: '', reviewer: '', late: false });
   const startApplied = useRef(false);
-  const load = useCallback(async () => { try { const next = await api('workspace'); if (!startApplied.current) { startApplied.current = true; if (next.me.role === 'participant' && !next.me.password_set_at) { setModule(0); history.replaceState(null, '', urlFor(0)); } else if (next.me.role === 'participant' && !new URLSearchParams(location.search).get('module')) setModule(startModule(next.sessions, new Date(next.now).getTime())); if (next.me.role === 'admin') setStaffTab('activity'); } setData(old => { if (old && old.me.id !== next.me.id) { location.reload(); return old; } return next; }); setReauth(false); setError(''); } catch (e) { if ((e as RequestError).code === 'unauthenticated') { setReauth(true); } else setError((e as Error).message); } finally { setLoading(false); } }, []);
+  const load = useCallback(async () => { try { const next = await api('workspace'); if (!startApplied.current && !next.consentRequired) { startApplied.current = true; if (next.me.role === 'participant' && !next.me.password_set_at) { setModule(0); history.replaceState(null, '', urlFor(0)); } else if (next.me.role === 'participant' && !new URLSearchParams(location.search).get('module')) setModule(startModule(next.sessions, new Date(next.now).getTime())); if (next.me.role === 'admin') setStaffTab('activity'); } setData(old => { if (old && old.me.id !== next.me.id) { location.reload(); return old; } return next; }); setReauth(false); setError(''); } catch (e) { if ((e as RequestError).code === 'unauthenticated') { setReauth(true); } else setError((e as Error).message); } finally { setLoading(false); } }, []);
   const current = useRef({ module, dirty }); current.current = { module, dirty };
   useEffect(() => { api('config').then(r => setLocal(r.local)).catch(e => setError(e.message)); setModule(moduleFromUrl()); void load(); }, [load]);
   useEffect(() => { const listener = (e: BeforeUnloadEvent) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } }; window.addEventListener('beforeunload', listener); return () => window.removeEventListener('beforeunload', listener); }, [dirty]);
@@ -124,6 +142,7 @@ export default function Workspace() {
   function move(next: number) { if (!dirty || confirm('You have unsaved text. Leave this page and discard those changes?')) { setDirty(false); setModule(next); if (next !== module) history.pushState(null, '', urlFor(next)); } }
   if (loading) return <div className="loading" role="status">Opening your workspace…</div>;
   if (!data) return <>{error && <div className="startup-error"><ErrorBox error={error}/><button onClick={load}>Try again</button></div>}<SignIn local={local} onSuccess={load}/></>;
+  if (data.me.role === 'participant' && data.consentRequired) return <div className="first-password consent-gate"><p className="small">Signed in as <strong>{data.me.name}</strong></p><AccountConsent refresh={load} onAuth={() => setReauth(true)}/><button className="text-button" onClick={async () => { await api('auth/logout', {}); location.reload(); }}>Sign out</button>{reauth && <ReauthDialog local={local} onSuccess={load}/>}</div>;
   if (data.me.role === 'participant' && !data.me.password_set_at) return <div className="first-password"><PasswordPrompt refresh={load} onAuth={() => setReauth(true)} done={() => { setModule(0); history.replaceState(null, '', urlFor(0)); }}/>{reauth && <ReauthDialog local={local} onSuccess={load}/>}</div>;
   const staff = data.me.role !== 'participant';
   const auth = () => setReauth(true);
@@ -158,7 +177,6 @@ export default function Workspace() {
       <div className="sidebar-bottom"><span className="avatar">{data.me.name.slice(0,1)}</span><div><strong>{data.me.name}</strong><small>{data.me.role === 'reviewer' ? 'Expert' : data.me.role}</small></div><button className="text-button" onClick={() => setAccount(true)}>Account</button><button className="text-button" onClick={async () => { if (dirty && !confirm('Discard unsaved changes and sign out?')) return; await api('auth/logout', {}); location.reload(); }}>Sign out</button></div>
     </aside><main id="main" className="main"><header className="topbar"><span>{staff ? 'Team workspace' : 'Learning workspace'}</span><div className="topbar-actions">{!staff && <button className="secondary small-button" onClick={() => setFeedback(true)}>Feedback</button>}<Notifications data={data} refresh={load} onAuth={auth}/></div><span className="session-note">{upcoming ? <>{sessionState(upcoming, now) === 'started' ? 'Live session started' : 'Next live session'} <strong>{date(upcoming.starts_at)}</strong></> : 'No upcoming live sessions'}</span></header>
       <ErrorBox error={error}/>{error && <button className="secondary" onClick={load}>Retry loading</button>}
-      {!staff && !data.earlyCommencementConsents.some(c => c.owner_id === data.me.id && c.course_key === earlyCommencement.courseKey) && <AccountConsent refresh={load} onAuth={auth}/>}
       {staff ? activeReview ? <Expert data={data} refresh={load} active={activeReview} setActive={id => chooseReview(id, staffTab)} onAuth={auth} onDirty={setDirty} filter={queueFilter} setFilter={setQueueFilter} now={now}/> : staffTab === 'journal' ? <Journal data={data} now={now} filter={journalFilter} setFilter={setJournalFilter} open={id => chooseReview(id, 'journal')}/> : staffTab === 'presentations' ? <Presentations data={data} refresh={load} onAuth={auth}/> : staffTab === 'email' ? <MailAdmin data={data} refresh={load} onAuth={auth}/> : staffTab === 'feedback' ? <FeedbackAdmin data={data}/> : staffTab === 'activity' ? <ActivityDashboard data={data} now={now} open={id => chooseReview(id, 'activity')}/> : staffTab === 'questions' ? <TeamQuestions data={data} refresh={load} onAuth={auth}/> : staffTab === 'content' ? data.me.role === 'admin' ? <ContentAdmin data={data} refresh={load} onAuth={auth} onDirty={setDirty}/> : <TeamMaterials data={data}/> : data.me.role === 'admin' ? <Admin data={data} refresh={load} local={local}/> : <Expert data={data} refresh={load} active={activeReview} setActive={id => chooseReview(id, staffTab)} onAuth={auth} onDirty={setDirty} filter={queueFilter} setFilter={setQueueFilter} now={now}/>
       : module === PROJECT ? <ProjectView data={data} refresh={load} onAuth={auth} open={move}/> : <>
         <div className="page-heading"><p className="eyebrow">MODULE {String(module).padStart(2,'0')}</p><h1>{modules[module]}</h1><p className="muted">{module === 0 ? 'Get ready for the first shared session.' : 'Build your concept one considered decision at a time.'}</p></div>
@@ -306,6 +324,7 @@ function ConsentEvidence({ consent }: { consent?: Row }) {
     <p>{consent.participant_name} · {consent.participant_email}</p><p>{consent.course_title}</p>
     <p>Recorded at (UTC): {new Date(consent.accepted_at).toISOString()} · Version {consent.consent_version}</p>
     <p>{consent.consent_text}</p><p className="small muted">Record: {consent.id} · Source: {consent.source === 'lms_account' ? 'LMS account after registration' : 'LMS registration'}</p>
+    {consent.terms_url && <p className="small"><a href={consent.terms_url} target="_blank" rel="noopener noreferrer">Terms and Conditions shown with this consent</a><br/>PDF SHA-256: {consent.terms_sha256}</p>}
   </details>;
 }
 
@@ -612,37 +631,39 @@ function Modal({ label, close, children }: { label: string; close: () => void; c
 }
 
 // Решение 31.10.2026: после первого входа по ссылке — свой пароль; ссылка остаётся запасным входом.
+function TermsLink() {
+  return <p className="terms-link small">For further details, read the <a href={earlyCommencement.termsUrl} target="_blank" rel="noopener noreferrer">Terms and Conditions (PDF, opens in a new tab)</a>.</p>;
+}
+function ConsentChoice({ checked, change, busy }: { checked: boolean; change: (checked: boolean) => void; busy: boolean }) {
+  return <><TermsLink/><label className="choice consent-choice"><input type="checkbox" checked={checked} onChange={e => change(e.target.checked)} disabled={busy}/><span>{earlyCommencement.text}</span></label></>;
+}
 function AccountConsent({ refresh, onAuth }: { refresh: () => Promise<void>; onAuth: () => void }) {
   const [checked, setChecked] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [saved, setSaved] = useState(false);
   return <section className="admin-card account-consent" aria-labelledby="account-consent-title">
     <h2 id="account-consent-title">Early commencement of the course</h2>
     {saved ? <p role="status">Your early commencement consent has been recorded.</p> : <>
-      <p className="muted small">If you wish to begin the course during your 14-day withdrawal period, please review and confirm the statement below.</p>
+      <p className="muted small">Please review the Terms and Conditions and confirm the statement below. Course access stays locked until your confirmation is recorded.</p>
       <form onSubmit={async e => { e.preventDefault(); if (!checked || busy) return; setBusy(true); setError(''); try { await api('auth/early-commencement', { earlyCommencementConsent: true, consentVersion: earlyCommencement.version }); setSaved(true); await refresh(); } catch (err) { if ((err as RequestError).code === 'unauthenticated') onAuth(); setError((err as Error).message); } finally { setBusy(false); } }}>
-        <label className="choice consent-choice"><input type="checkbox" checked={checked} onChange={e => setChecked(e.target.checked)} disabled={busy}/><span>{earlyCommencement.text}</span></label>
+        <ConsentChoice checked={checked} change={setChecked} busy={busy}/>
         <button disabled={!checked || busy}>{busy ? 'Saving…' : 'Confirm early commencement'}</button><ErrorBox error={error}/>
       </form>
     </>}
   </section>;
 }
 
-function PasswordForm({ refresh, onAuth, done, submitLabel, registration = false }: { refresh: () => Promise<void>; onAuth: () => void; done?: () => void; submitLabel: string; registration?: boolean }) {
+function PasswordForm({ refresh, onAuth, done, submitLabel }: { refresh: () => Promise<void>; onAuth: () => void; done?: () => void; submitLabel: string }) {
   const [password,setPassword] = useState(''); const [repeat,setRepeat] = useState(''); const [shown,setShown] = useState(false);
-  const [consented,setConsented] = useState(false);
   const [local,setLocal] = useState(''); const [busy,setBusy] = useState(false);
-  return <form onSubmit={async e => { e.preventDefault(); if (busy) return; setLocal(''); if (password !== repeat) { setLocal('The passwords do not match.'); return; } setBusy(true); let r: Response; try { r = await fetch('/api/v1/auth/password', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password, ...(registration ? { earlyCommencementConsent: consented, consentVersion: earlyCommencement.version } : {}) }) }); } catch { setBusy(false); setLocal('Connection lost. Your password was not saved; try again.'); return; } const body = await r.json().catch(() => ({})); setBusy(false); if (!r.ok) { if (body.code === 'unauthenticated') onAuth(); setLocal(body.message || 'The password could not be saved.'); return; } setPassword(''); setRepeat(''); setLocal(''); await refresh(); done?.(); }}>
+  return <form onSubmit={async e => { e.preventDefault(); if (busy) return; setLocal(''); if (password !== repeat) { setLocal('The passwords do not match.'); return; } setBusy(true); let r: Response; try { r = await fetch('/api/v1/auth/password', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) }); } catch { setBusy(false); setLocal('Connection lost. Your password was not saved; try again.'); return; } const body = await r.json().catch(() => ({})); setBusy(false); if (!r.ok) { if (body.code === 'unauthenticated') onAuth(); setLocal(body.message || 'The password could not be saved.'); return; } setPassword(''); setRepeat(''); setLocal(''); await refresh(); done?.(); }}>
     <label htmlFor="new-password">New password</label><input id="new-password" type={shown ? 'text' : 'password'} autoComplete="new-password" minLength={8} maxLength={72} value={password} onChange={e => setPassword(e.target.value)} required aria-describedby="password-rules"/>
     <p id="password-rules" className="muted small">At least 8 characters. A short phrase is easier to remember than random symbols.</p>
     <label htmlFor="repeat-password">Repeat the password</label><input id="repeat-password" type={shown ? 'text' : 'password'} autoComplete="new-password" value={repeat} onChange={e => setRepeat(e.target.value)} required/>
     <label className="choice"><input type="checkbox" checked={shown} onChange={e => setShown(e.target.checked)}/>Show password</label>
-    {registration && <fieldset className="early-commencement"><legend>Early commencement of the course</legend>
-      <label className="choice consent-choice"><input id="early-commencement-consent" type="checkbox" checked={consented} onChange={e => setConsented(e.target.checked)} disabled={busy}/><span>{earlyCommencement.text}</span></label>
-    </fieldset>}
     <button disabled={busy}>{busy ? 'Saving…' : submitLabel}</button><ErrorBox error={local}/>
   </form>;
 }
 function PasswordPrompt({ refresh, onAuth, done }: { refresh: () => Promise<void>; onAuth: () => void; done: () => void }) {
-  return <section className="admin-card password-prompt"><p className="eyebrow">FIRST SIGN-IN</p><h1>Create your password</h1><p className="muted small">Create a password to open Module 0. Next time, sign in with your email and password. You can still request an email link if you forget it.</p><PasswordForm refresh={refresh} onAuth={onAuth} done={done} registration submitLabel="Save password and open Module 0"/></section>;
+  return <section className="admin-card password-prompt"><p className="eyebrow">FIRST SIGN-IN</p><h1>Create your password</h1><p className="muted small">Create a password to open Module 0. Next time, sign in with your email and password. You can still request an email link if you forget it.</p><PasswordForm refresh={refresh} onAuth={onAuth} done={done} submitLabel="Save password and open Module 0"/></section>;
 }
 function AccountPanel({ data, refresh, onAuth }: { data: Data; refresh: () => Promise<void>; onAuth: () => void }) {
   const [saved,setSaved] = useState(false);

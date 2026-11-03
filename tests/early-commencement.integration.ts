@@ -1,6 +1,7 @@
 // Сквозная проверка только на локальной LMS с синтетической БД.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { earlyCommencement } from '../src/lib/early-commencement';
 
 const origin = process.env.QA_ORIGIN || 'http://127.0.0.1:8791';
@@ -26,6 +27,23 @@ async function learner() {
   return { id, email, jar: await signIn(email) };
 }
 const yes = await learner(); const no = await learner();
+const restricted = (await call('workspace', undefined, no.jar)).body;
+assert.equal(restricted.consentRequired, true);
+for (const key of ['materials','assignments','project','questions','files']) assert.equal(restricted[key], undefined, 'no course content before consent');
+for (const path of ['files/10000000-0000-4000-8000-000000000001/play','files/10000000-0000-4000-8000-000000000001/captions','files/10000000-0000-4000-8000-000000000001/download']) {
+  const result = await call(path, undefined, no.jar);
+  assert.equal(result.status, 403);
+  assert.equal(result.body.code, 'consent_required');
+}
+for (const path of ['uploads','commands']) {
+  const result = await call(path, {}, no.jar);
+  assert.equal(result.status, 403);
+  assert.equal(result.body.code, 'consent_required');
+}
+const pdf = await fetch(`${origin}${earlyCommencement.termsUrl}`);
+assert.equal(pdf.status, 200, 'terms are available before sign-in');
+assert.ok(pdf.headers.get('content-type')?.includes('application/pdf'));
+assert.equal(createHash('sha256').update(Buffer.from(await pdf.arrayBuffer())).digest('hex'),earlyCommencement.termsSha256);
 const password = 'Synthetic consent test phrase';
 const accepted = { password, earlyCommencementConsent: true, consentVersion: earlyCommencement.version };
 assert.equal((await call('auth/password', accepted)).status, 401);
@@ -46,7 +64,7 @@ assert.deepEqual((await call('workspace', undefined, no.jar)).body.earlyCommence
 assert.equal((await call('auth/password', accepted, no.jar)).status, 409, 'no retroactive consent through password changes');
 const late = { earlyCommencementConsent: true, consentVersion: earlyCommencement.version };
 assert.equal((await call('auth/early-commencement', late)).status, 401);
-for (const payload of [{}, { ...late, earlyCommencementConsent: false }, { ...late, earlyCommencementConsent: 'true' }, { ...late, ownerId: yes.id }, { ...late, acceptedAt: '2000-01-01' }]) {
+for (const payload of [{}, { ...late, earlyCommencementConsent: false }, { ...late, earlyCommencementConsent: 'true' }, { ...late, ownerId: yes.id }, { ...late, acceptedAt: '2000-01-01' }, { ...late, termsUrl: '/fake.pdf' }]) {
   assert.equal((await call('auth/early-commencement', payload, no.jar)).status, 422);
 }
 assert.equal((await call('auth/early-commencement', { ...late, consentVersion: 'stale' }, no.jar)).status, 409);
@@ -57,8 +75,15 @@ assert.equal((await call('auth/early-commencement', late, no.jar)).status, 200);
 const lateData = (await call('workspace', undefined, no.jar)).body;
 assert.equal(lateData.earlyCommencementConsents.length, 1);
 assert.equal(lateData.earlyCommencementConsents[0].source, 'lms_account');
+assert.equal(lateData.earlyCommencementConsents[0].terms_sha256, earlyCommencement.termsSha256);
 assert.equal(lateData.me.password_set_at, originalPasswordAt);
 assert.equal((await call('auth/password-login', { email: no.email, password })).status, 200, 'existing password is unchanged');
+const first = await learner();
+assert.equal((await call('auth/early-commencement', late, first.jar)).status, 200, 'first sign-in may confirm before creating password');
+assert.equal((await call('workspace', undefined, first.jar)).body.consentRequired, false);
+assert.equal((await call('commands', {}, first.jar)).body.code, 'password_required');
+assert.equal((await call('auth/password', { password }, first.jar)).status, 200);
+assert.ok(Array.isArray((await call('workspace', undefined, first.jar)).body.materials));
 const adminData = (await call('workspace', undefined, admin)).body;
 assert.equal(adminData.earlyCommencementConsents.filter((c: { owner_id: string }) => c.owner_id === yes.id).length, 1);
 let receipt: { status: string; body: string }[] = [];
@@ -75,4 +100,4 @@ const lateReceipts = (await call('workspace', undefined, admin)).body.notificati
 assert.equal(lateReceipts.length, 1);
 assert.equal(lateReceipts[0].status, 'sent');
 assert.ok(lateReceipts[0].body.includes('after registration'));
-console.log('Consent HTTP integration passed: authentication, strict input, stale version, checked/unchecked registration, retries, privacy, admin receipt and local delivery.');
+console.log('Consent HTTP integration passed: mandatory course gate, no content before consent, direct file/upload/command denial, public PDF hash, first and existing participant flows, authentication, strict input, version, retries, privacy and admin receipts.');
