@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { command, readWorkspace } from '../src/lib/service';
 import { deliver, plan, when, type Outcome, type Provider } from '../src/lib/mail';
 import { setPassword } from '../src/lib/auth';
+import { earlyCommencement } from '../src/lib/early-commencement';
 import { sql } from '../src/lib/db';
 
 const learner = '10000000-0000-4000-8000-000000000001';
@@ -39,6 +40,38 @@ test('welcome email contains the recipient’s one-time link and no token is sto
   assert.equal(queued.status, 'sent');
   assert.ok(!queued.body.includes('token='));
   assert.ok(queued.body.includes('{{SIGN_IN_LINK}}'));
+});
+
+test('resending welcome preserves the registered profile and sends one fresh link per request key', async () => {
+  const id = randomUUID(); const address = `${id}@example.test`;
+  await command(admin, 'enrollment.invite', { id, name: 'Returning Student', email: address, accessEndsAt: new Date(Date.now() + 30 * 86_400_000).toISOString() });
+  const mail = fake();
+  await drain(new Date(), mail.provider);
+  await sql`update lms.profiles set activated_at=now() where id=${id}`;
+  await setPassword(id, 'Returning learner password', { version: earlyCommencement.version });
+  const consents = await sql`select * from lms.early_commencement_consents where owner_id=${id}`;
+  const [before] = await sql`select * from lms.profiles where id=${id}`;
+  const input = { id, key: randomUUID() };
+  await Promise.all([command(admin, 'enrollment.resend', input), command(admin, 'enrollment.resend', input)]);
+  await drain(new Date(), mail.provider);
+  const letters = mail.sent.filter(m => m.to === address && m.subject.startsWith('Welcome to Slot Design'));
+  assert.equal(letters.length, 2, 'initial welcome plus exactly one resend');
+  assert.notEqual(letters[0].text.match(/#token=\w+/)?.[0], letters[1].text.match(/#token=\w+/)?.[0]);
+  assert.match(letters[1].text, /Your existing password still works/);
+  assert.doesNotMatch(letters[1].text, /create your password/);
+  assert.deepEqual((await sql`select * from lms.profiles where id=${id}`)[0], before);
+  assert.deepEqual(await sql`select * from lms.early_commencement_consents where owner_id=${id}`, consents);
+  const outbox = await sql`select id from lms.outbox where (kind='enrollment.invited' and aggregate_id=${id}) or (kind='enrollment.resent' and payload->>'ownerId'=${id})`;
+  assert.equal(outbox.length, 2);
+  await assert.rejects(command(admin, 'enrollment.invite', { id: randomUUID(), name: 'Duplicate', email: address, accessEndsAt: before.access_ends_at.toISOString() }), /already belongs to a course member/);
+  await assert.rejects(command(learner, 'enrollment.resend', { id, key: randomUUID() }), /Administrator/);
+  await command(admin, 'enrollment.revoke', { id });
+  await assert.rejects(command(admin, 'enrollment.resend', { id, key: randomUUID() }), /not available/);
+  await command(admin, 'enrollment.restore', { id });
+  await sql`update lms.profiles set access_ends_at=now()-interval '1 day' where id=${id}`;
+  await assert.rejects(command(admin, 'enrollment.resend', { id, key: randomUUID() }), /not available/);
+  await assert.rejects(command(admin, 'enrollment.resend', { id: reviewer, key: randomUUID() }), /not available/);
+  assert.equal((await sql`select id from lms.outbox where (kind='enrollment.invited' and aggregate_id=${id}) or (kind='enrollment.resent' and payload->>'ownerId'=${id})`).length, 2);
 });
 
 test('a replacement sign-in link uses the same mail worker and stays out of course notifications', async () => {

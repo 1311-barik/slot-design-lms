@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { isPackage, validateSubmission, type AssignmentSpec, type Payload } from '@/lib/contract';
 import { modules } from '@/lib/course';
 import { earlyCommencement } from '@/lib/early-commencement';
+import { accessEndFromDate } from '@/lib/access-date';
 
 type Row = { id: string; [key: string]: any };
 type Data = { consentRequired?: boolean; me: Row; assignments: Row[]; works: Row[]; drafts: Row[]; submissions: Row[]; reviews: Row[]; reviewDrafts: Row[]; files: Row[]; people: Row[]; project: Row | null; packageItems: Row[]; questions: Row[]; answers: Row[]; materials: Row[]; materialFiles: Row[]; progress: Row[]; sessions: Row[]; now: string; presentations: Row[]; reviewers: Row[]; notifications: Row[]; feedback: Row[]; earlyCommencementConsents: Row[]; projects: Row[]; mail: { provider: string | null } | null };
@@ -68,8 +69,6 @@ function nextStep(assignment: Row | undefined, work: Row | undefined, draft: Row
 function SignIn({ local, onSuccess, reauth = false }: { local: boolean; onSuccess: () => void; reauth?: boolean }) {
   const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [message, setMessage] = useState(''); const [link, setLink] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   const [token, setToken] = useState('');
-  const [consented, setConsented] = useState(false); const [team, setTeam] = useState(reauth);
-  const mayEnter = consented || team;
   // Новые письма несут token во фрагменте URL; query остаётся для уже отправленных ссылок.
   // code — стандартное письмо Supabase (PKCE). Ссылка тратится только после нажатия Continue.
   useEffect(() => {
@@ -80,38 +79,33 @@ function SignIn({ local, onSuccess, reauth = false }: { local: boolean; onSucces
     if (value || code || params.get('error') || hash.get('error')) history.replaceState(null, '', '/');
   }, []);
   async function signIn(authenticate: () => Promise<unknown>) {
-    if (!mayEnter || busy) return;
-    setBusy(true); setError(''); let authenticated = false;
+    if (busy) return;
+    setBusy(true); setError('');
     try {
-      await authenticate(); authenticated = true;
-      // Галочка связывается с человеком только после проверки его пароля или одноразовой ссылки.
-      const next = await api('workspace');
-      if (next.me.role === 'participant' && next.consentRequired && consented) await api('auth/early-commencement', { earlyCommencementConsent: true, consentVersion: earlyCommencement.version });
+      await authenticate();
+      // После проверки личности load покажет согласие только при отсутствии записи.
       onSuccess();
-    } catch (e) {
-      // После сбоя записи открывается только закрытый экран согласия; курс сервер не отдаёт.
-      if (authenticated) onSuccess(); else setError((e as Error).message);
-    } finally { setBusy(false); }
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
   }
   async function enter(value: string) { await signIn(() => api('auth/exchange', value.startsWith('code:') ? (([code, flowId]) => flowId ? { code, flowId } : { code })(value.slice(5).split(':')) : { token: value })); }
   return <div className={reauth ? 'reauth' : 'login-shell'}><section className="login-card">
     <div className="brand"><img className="brand-logo" src="/brand/talentgrator.png" alt="Talentgrator" width={72} height={44}/><span>Slot design</span></div>
     <p className="eyebrow">FROM IDEA TO RELEASE</p><h1>{reauth ? 'Sign in to continue' : 'A space to build your next idea.'}</h1>
     <p className="muted">Your course, work in progress and expert feedback, together.</p>
-    {!team && <fieldset className="early-commencement login-consent"><legend>Before you enter the course</legend><p className="small muted">Please review the Terms and Conditions and confirm early commencement. Confirmation is required for course access.</p><ConsentChoice checked={consented} change={setConsented} busy={busy}/></fieldset>}
-    {token ? <><p>Continue to open your course. This link can be used once.</p><button disabled={busy || !mayEnter} onClick={() => enter(token)}>Continue to course</button></> : <>
+    {token ? <><p>Continue to open your course. This link can be used once.</p><button disabled={busy} onClick={() => enter(token)}>Continue to course</button></> : <>
       <form onSubmit={async e => { e.preventDefault(); await signIn(() => api('auth/password-login', { email, password })); }}>
         <label htmlFor="email">Email address</label><input id="email" type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} required placeholder="you@example.com" />
         <label htmlFor="password">Password</label><input id="password" type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required />
-        <button className="full" disabled={busy || !mayEnter}>{busy ? 'Signing in…' : 'Sign in'}</button>
+        <button className="full" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
       </form>
       {/* Первый вход и забытый пароль — ссылка на почту. */}
-      <div className="link-sign-in"><p className="small">First time here or forgot your password?</p><button className="secondary full" disabled={busy || !email || !mayEnter} onClick={async () => { setBusy(true); setError(''); setLink(''); try { const r = await api('auth/link', { email }); setMessage(r.message); setLink(r.localLink || ''); } catch (err) { setError((err as Error).message); } finally { setBusy(false); } }}>{busy ? 'Requesting link…' : 'Email me a sign-in link'}</button>{!email && <p className="muted small">Enter your email address above first.</p>}</div>
+      <div className="link-sign-in"><p className="small">First time here or forgot your password?</p><button className="secondary full" disabled={busy || !email} onClick={async () => { setBusy(true); setError(''); setLink(''); try { const r = await api('auth/link', { email }); setMessage(r.message); setLink(r.localLink || ''); } catch (err) { setError((err as Error).message); } finally { setBusy(false); } }}>{busy ? 'Requesting link…' : 'Email me a sign-in link'}</button>{!email && <p className="muted small">Enter your email address above first.</p>}</div>
     </>}
     <p className="muted small">Access is by invitation.</p><ErrorBox error={error} />
-    <button className="text-button team-sign-in" disabled={busy} onClick={() => { setTeam(!team); setConsented(false); setError(''); }}>{team ? 'Return to participant sign-in' : 'Course team sign-in'}</button>{team && <TermsLink/>}
+    <TermsLink/>
     {message && <p role="status">{message}</p>}
-    {local && <div className="test-mail"><strong>Local test mailbox</strong><p>Use alex@example.test (participant), expert@example.test or admin@example.test. No real email is sent.</p>{link && <button className="secondary" onClick={() => enter(new URLSearchParams(new URL(link).hash.slice(1)).get('token')!)} disabled={busy || !mayEnter}>Open test sign-in link</button>}</div>}
+    {local && <div className="test-mail"><strong>Local test mailbox</strong><p>Use alex@example.test (participant), expert@example.test or admin@example.test. No real email is sent.</p>{link && <button className="secondary" onClick={() => enter(new URLSearchParams(new URL(link).hash.slice(1)).get('token')!)} disabled={busy}>Open test sign-in link</button>}</div>}
   </section><aside className="login-aside"><p>Explore the idea.<br/>Make the choices.<br/><em>Build the concept.</em></p><small>Live sessions on Sundays, 15:00 CET · 15 November–20 December 2026<br/>Final pitch in January 2027 · Europe/Berlin</small></aside></div>;
 }
 
@@ -315,7 +309,20 @@ function ReviewEditor({ submission, work, data, refresh, onAuth, onDirty }: { su
 
 function Admin({ data, refresh, local }: { data: Data; refresh: () => Promise<void>; local: boolean }) {
   const [name,setName] = useState('');const [email,setEmail] = useState('');const [end,setEnd] = useState('');const [error,setError] = useState('');const [message,setMessage] = useState(''); const [busy,setBusy] = useState(false);
-  return <><div className="page-heading"><p className="eyebrow">ADMINISTRATION</p><h1>People & course access</h1><p className="muted">One shared cohort. Participants keep their drafts private.</p></div><section className="admin-card"><h2>Invite a participant</h2><form onSubmit={async e => {e.preventDefault();setBusy(true);setError('');try {const inferred = email.split('@')[0].replace(/[._+-]+/g,' ').trim().replace(/\b\p{L}/gu, c => c.toUpperCase());await cmd('enrollment.invite',{id:crypto.randomUUID(),name:name.trim() || inferred || 'Student',email,accessEndsAt:new Date(`${end}T23:59:59+01:00`).toISOString()});setMessage(`Access prepared for ${email}. Welcome email queued; check delivery in Email.`);await refresh();}catch(err){setError((err as Error).message);}finally{setBusy(false);}}}><label htmlFor="invite-name">Name (optional)</label><input id="invite-name" value={name} onChange={e => setName(e.target.value)} placeholder="Inferred from email if blank"/><label htmlFor="invite-email">Email</label><input id="invite-email" type="email" value={email} onChange={e => setEmail(e.target.value)} required/><label htmlFor="access-end">Access ends on (CET)</label><input id="access-end" type="date" value={end} onChange={e => setEnd(e.target.value)} required/><p className="small muted">{local ? 'Use an @example.test address for this local build.' : 'The participant receives one welcome email with a personal sign-in link.'}</p><button disabled={busy}>{busy ? 'Preparing…' : 'Prepare course access'}</button><ErrorBox error={error}/>{message && <p role="status">{message}</p>}</form></section><section className="people"><h2>Course members</h2>{data.people.map(p => <div className="person-row" key={p.id}><div><strong>{p.name}</strong><small>{p.email}</small>{p.role === 'participant' && <ConsentEvidence consent={data.earlyCommencementConsents.find(c => c.owner_id === p.id)}/>}</div><span>{p.revoked_at ? 'Access revoked' : p.activated_at ? p.role : 'Invited'}</span>{p.role==='participant' && <button className="secondary" onClick={async () => {if(!p.revoked_at && !confirm(`Revoke course access for ${p.name}? They will no longer be able to open their work or files.`))return;try{await cmd(p.revoked_at ? 'enrollment.restore' : 'enrollment.revoke',{id:p.id});await refresh();}catch(e){setError((e as Error).message);}}}>{p.revoked_at ? 'Restore access' : 'Revoke access'}</button>}</div>)}</section></>;
+  const resend = useRef<{ id: string; key: string } | null>(null);
+  async function resendWelcome(person: Row) {
+    if (busy) return;
+    setBusy(true); setError(''); setMessage('');
+    if (resend.current?.id !== person.id) resend.current = { id: person.id, key: crypto.randomUUID() };
+    try {
+      await cmd('enrollment.resend', resend.current);
+      resend.current = null;
+      setMessage(`Welcome email queued for ${person.email}; check delivery in Email.`);
+      await refresh();
+    } catch (err) { setError((err as Error).message); }
+    finally { setBusy(false); }
+  }
+  return <><div className="page-heading"><p className="eyebrow">ADMINISTRATION</p><h1>People & course access</h1><p className="muted">One shared cohort. Participants keep their drafts private.</p></div><section className="admin-card"><h2>Invite a participant</h2><form onSubmit={async e => {e.preventDefault();setBusy(true);setError('');try {const inferred = email.split('@')[0].replace(/[._+-]+/g,' ').trim().replace(/\b\p{L}/gu, c => c.toUpperCase());await cmd('enrollment.invite',{id:crypto.randomUUID(),name:name.trim() || inferred || 'Student',email,accessEndsAt:accessEndFromDate(end)});setMessage(`Access prepared for ${email}. Welcome email queued; check delivery in Email.`);await refresh();}catch(err){setError((err as Error).message);}finally{setBusy(false);}}}><label htmlFor="invite-name">Name (optional)</label><input id="invite-name" value={name} onChange={e => setName(e.target.value)} placeholder="Inferred from email if blank"/><label htmlFor="invite-email">Email</label><input id="invite-email" type="email" value={email} onChange={e => setEmail(e.target.value)} required/><label htmlFor="access-end">Access ends on (CET)</label><input id="access-end" type="date" value={end} onChange={e => setEnd(e.target.value)} min={new Date().toISOString().slice(0,10)} max="9999-12-31" required/><p className="small muted">{local ? 'Use an @example.test address for this local build.' : 'The participant receives one welcome email with a personal sign-in link.'}</p><button disabled={busy}>{busy ? 'Preparing…' : 'Prepare course access'}</button><ErrorBox error={error}/>{message && <p role="status">{message}</p>}</form></section><section className="people"><h2>Course members</h2>{data.people.map(p => <div className="person-row" key={p.id}><div><strong>{p.name}</strong><small>{p.email}</small>{p.role === 'participant' && <ConsentEvidence consent={data.earlyCommencementConsents.find(c => c.owner_id === p.id)}/>}</div><span>{p.revoked_at ? 'Access revoked' : p.activated_at ? p.role : 'Invited'}</span>{p.role==='participant' && !p.revoked_at && new Date(p.access_ends_at) > new Date(data.now) && <button className="secondary" disabled={busy} onClick={() => resendWelcome(p)}>Resend welcome email</button>}{p.role==='participant' && <button className="secondary" onClick={async () => {if(!p.revoked_at && !confirm(`Revoke course access for ${p.name}? They will no longer be able to open their work or files.`))return;try{await cmd(p.revoked_at ? 'enrollment.restore' : 'enrollment.revoke',{id:p.id});await refresh();}catch(e){setError((e as Error).message);}}}>{p.revoked_at ? 'Restore access' : 'Revoke access'}</button>}</div>)}</section></>;
 }
 
 function ConsentEvidence({ consent }: { consent?: Row }) {

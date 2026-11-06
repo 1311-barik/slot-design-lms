@@ -212,11 +212,21 @@ async function perform(tx: Tx, actor: string, action: string, input: unknown): P
       if (!allowed.ok) throw new AppError('forbidden', 'Administrator access is required.', 403);
       if (new Date(data.accessEndsAt) <= new Date()) throw new AppError('access_date', 'Choose a future access end date.');
       const [existing] = await tx`select * from lms.profiles where email=${data.email.toLowerCase()}`;
-      if (existing) return existing;
+      if (existing) throw new AppError('already_enrolled', 'This email already belongs to a course member. Use Resend welcome email in Course members.', 409, ['email']);
       const [person] = await tx`insert into lms.profiles(id,email,name,role,access_ends_at) values(${data.id},${data.email.toLowerCase()},${data.name},'participant',${data.accessEndsAt}) returning *`;
       await tx`insert into lms.outbox(kind,aggregate_id) values('enrollment.invited',${person.id})`;
       await tx`insert into lms.audit_events(actor_id,action,target_id) values(${actor},'enrollment.invited',${person.id})`;
       return person;
+    }
+    case 'enrollment.resend': {
+      const { id, key } = z.object({ id: uuid, key: uuid }).strict().parse(input);
+      await requireAdmin(tx);
+      await tx`select pg_advisory_xact_lock(hashtextextended(${id},0))`;
+      const [person] = await tx`select * from lms.profiles where id=${id} and role='participant' and revoked_at is null and access_ends_at>clock_timestamp()`;
+      if (!person) throw unavailable();
+      await tx`insert into lms.outbox(kind,aggregate_id,payload) values('enrollment.resent',${key},${tx.json({ ownerId: id })})`;
+      await tx`insert into lms.audit_events(actor_id,action,target_id) values(${actor},'enrollment.resend',${id})`;
+      return { id };
     }
     case 'enrollment.revoke':
     case 'enrollment.restore': {
