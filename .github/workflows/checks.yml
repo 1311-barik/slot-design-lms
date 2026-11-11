@@ -46,5 +46,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Persistent sign-in links and consent gate over HTTP
+        run: bash scripts/test-auth-links.sh
       - name: Install, update and roll back on disposable Linux
         run: bash scripts/test-deployment.sh

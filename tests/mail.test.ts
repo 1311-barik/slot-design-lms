@@ -27,14 +27,15 @@ async function drain(now: Date, provider: Provider) {
 }
 const byKey = async (like: string) => sql`select * from lms.notifications where dedupe_key like ${like} order by created_at`;
 
-test('welcome email contains the recipient’s one-time link and no token is stored in the mail queue', async () => {
+test('welcome email contains a permanent personal link and no secret is stored in the mail queue', async () => {
   const id = randomUUID(); const address = `${id}@example.test`;
   await command(admin, 'enrollment.invite', { id, name: 'New Student', email: address, accessEndsAt: new Date(Date.now() + 30 * 86_400_000).toISOString() });
   const mail = fake();
   await drain(new Date(), mail.provider);
   const welcome = mail.sent.find(m => m.to === address && m.subject.startsWith('Welcome to Slot Design'));
   assert.ok(welcome);
-  assert.match(welcome.text, /Open your personal sign-in link:\nhttp:\/\/127\.0\.0\.1:8787\/#token=[a-f0-9]{64}/);
+  assert.match(welcome.text, /Open your personal sign-in link:\nhttp:\/\/127\.0\.0\.1:8787\/#access=[a-f0-9]{64}/);
+  assert.ok(welcome.text.includes('no time limit') && !welcome.text.includes('expires soon'));
   assert.match(welcome.text, /create your password, and Module 0 will open/i);
   const [queued] = await byKey(`enrollment.invited:${id}:%`);
   assert.equal(queued.status, 'sent');
@@ -56,7 +57,7 @@ test('resending welcome preserves the registered profile and sends one fresh lin
   await drain(new Date(), mail.provider);
   const letters = mail.sent.filter(m => m.to === address && m.subject.startsWith('Welcome to Slot Design'));
   assert.equal(letters.length, 2, 'initial welcome plus exactly one resend');
-  assert.notEqual(letters[0].text.match(/#token=\w+/)?.[0], letters[1].text.match(/#token=\w+/)?.[0]);
+  assert.notEqual(letters[0].text.match(/#access=\w+/)?.[0], letters[1].text.match(/#access=\w+/)?.[0]);
   assert.match(letters[1].text, /Your existing password still works/);
   assert.doesNotMatch(letters[1].text, /create your password/);
   assert.deepEqual((await sql`select * from lms.profiles where id=${id}`)[0], before);
@@ -82,7 +83,7 @@ test('a replacement sign-in link uses the same mail worker and stays out of cour
   await deliver(new Date(Date.now() + 2_000), mail.provider);
   const sent = mail.sent.find(m => m.to === 'alex@example.test' && m.subject === 'Your Slot Design sign-in link');
   assert.ok(sent);
-  assert.match(sent.text, /\/#token=[a-f0-9]{64}/);
+  assert.match(sent.text, /\/#access=[a-f0-9]{64}/);
   assert.ok(!(await readWorkspace(learner)).notifications.some((n: { dedupe_key: string }) => n.dedupe_key === key));
   const [queued] = await sql`select body,status from lms.notifications where dedupe_key=${key}`;
   assert.equal(queued.status, 'sent');

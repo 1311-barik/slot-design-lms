@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { acceptEarlyCommencement, actor, exchange, logout, passwordLogin, rateLimit, requestLink, setPassword } from '@/lib/auth';
+import { acceptEarlyCommencement, actor, exchange, exchangeAccessLink, logout, passwordLogin, rateLimit, requestLink, setPassword } from '@/lib/auth';
 import { command, isAdmin, readWorkspace } from '@/lib/service';
 import { runMail } from '@/lib/mail';
 import { ensureAuthUser } from '@/lib/supabase-admin';
@@ -106,8 +106,10 @@ async function handle(request: Request, context: Context) {
     }
     if (path === 'auth/exchange') {
       await rateLimit(`exchange:${request.headers.get('x-real-ip') || 'local'}`, 50);
-      const link = z.union([z.object({ token: z.string() }).strict(), z.object({ code: z.string(), flowId: z.string().max(200).optional() }).strict()]).parse(data);
-      await exchange('token' in link ? link.token : null, 'code' in link ? link.code : null, 'code' in link ? link.flowId : undefined); return response({ ok: true });
+      const link = z.union([z.object({ accessToken: z.string().max(128) }).strict(), z.object({ token: z.string() }).strict(), z.object({ code: z.string(), flowId: z.string().max(200).optional() }).strict()]).parse(data);
+      if ('accessToken' in link) await exchangeAccessLink(link.accessToken);
+      else await exchange('token' in link ? link.token : null, 'code' in link ? link.code : null, 'code' in link ? link.flowId : undefined);
+      return response({ ok: true });
     }
     if (path === 'auth/password-login') {
       const login = z.object({ email: z.email().max(254), password: z.string().max(200) }).strict().parse(data);

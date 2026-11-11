@@ -6,6 +6,8 @@ import { sql, type Tx } from './db';
 import { AppError } from './contract';
 import { config } from './config';
 import { earlyCommencement } from './early-commencement';
+import { createAccessLink, withAccessLink } from './access-links';
+import { serviceClient } from './supabase-admin';
 
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 const derive = promisify(scrypt) as (password: string, salt: Buffer, length: number) => Promise<Buffer>;
@@ -30,20 +32,41 @@ export async function requestLink(email: string) {
   const cfg = config();
   email = email.toLowerCase();
   await rateLimit(`email:${email}`, 6);
-  const [profile] = await sql`select id,revoked_at,access_ends_at from lms.profiles where email=${email}`;
-  const generic = { message: 'If you have course access, a one-time sign-in link is on its way. It expires soon.' };
+  const [profile] = await sql`select id,role,revoked_at,access_ends_at from lms.profiles where email=${email}`;
+  const generic = { message: 'If you have course access, a personal sign-in link is on its way. Keep it private.' };
   if (!profile || profile.revoked_at || new Date(profile.access_ends_at) <= new Date()) return generic;
   if (cfg.mode === 'local') {
     if (!email.endsWith('@example.test')) return generic;
-    const token = randomBytes(32).toString('hex');
+    if (profile.role==='participant') return { ...generic, localLink: await createAccessLink(email), localEmail: email };
+    const token=randomBytes(32).toString('hex');
     await sql`insert into lms.dev_tokens(hash,profile_id,expires_at) values(${hash(token)},${profile.id},now()+interval '15 minutes')`;
     return { ...generic, localLink: `${cfg.origin}/#token=${token}`, localEmail: email };
   }
   // Повторный вход и восстановление идут через тот же корпоративный SMTP, что и первое приглашение.
-  // Токен генерирует обработчик непосредственно перед отправкой, не хранит в БД и не раскрывает через API.
-  await sql`insert into lms.notifications(dedupe_key,kind,recipient_id,subject,body,link_path,not_after)
-    values(${`auth.link:${randomUUID()}`},'auth.link_requested',${profile.id},'Your Slot Design sign-in link',${`Hi,\n\nOpen your personal sign-in link:\n{{SIGN_IN_LINK}}\n\nChoose “Continue to course”. This link works once and expires soon. If you did not ask for it, you can ignore this email.`},'/',now()+interval '15 minutes')`;
+  // Ссылка создаётся перед отправкой; открытый секрет не хранится в очереди и не раскрывается через API.
+  const lifetime=profile.role==='participant' ? 'This link has no time limit while your course access is active and can be used again.' : 'This team sign-in link works once and expires soon.';
+  await sql`insert into lms.notifications(dedupe_key,kind,recipient_id,subject,body,link_path)
+    values(${`auth.link:${randomUUID()}`},'auth.link_requested',${profile.id},'Your Slot Design sign-in link',${`Hi,\n\nOpen your personal sign-in link:\n{{SIGN_IN_LINK}}\n\nChoose “Continue to course”. ${lifetime} Keep it private and do not forward it. If you did not ask for it, you can ignore this email.`},'/')`;
   return generic;
+}
+// Постоянная ссылка проверяется в LMS. Короткий Supabase OTP создаётся и обменивается только здесь,
+// непосредственно при нажатии Continue; в письмо и браузер он не передаётся.
+export async function exchangeAccessLink(token: string) {
+  const local = config().mode === 'local';
+  const session = local ? randomBytes(32).toString('hex') : '';
+  await withAccessLink(token, async (tx, person) => {
+    if (local) {
+      await tx`insert into lms.dev_sessions values(${hash(session)},${person.id},now()+interval '8 hours')`;
+    } else {
+      const generated = await serviceClient().auth.admin.generateLink({ type: 'magiclink', email: person.email });
+      const fresh = generated.data?.properties?.hashed_token;
+      if (generated.error || !fresh) throw new AppError('sign_in_unavailable', 'Sign-in is temporarily unavailable. Try the same link again.', 503);
+      const verified = await (await supabase()).auth.verifyOtp({ token_hash: fresh, type: 'email' });
+      if (verified.error || verified.data.user?.id !== person.id) throw new AppError('sign_in_unavailable', 'Sign-in is temporarily unavailable. Try the same link again.', 503);
+    }
+    await activate(tx, person.id);
+  });
+  if (local) (await cookies()).set(cookieName, session, { httpOnly: true, sameSite: 'lax', secure: false, path: '/', maxAge: 8 * 3600 });
 }
 export async function exchange(token: string | null, code: string | null = null, flowId?: string) {
   const invalid = () => new AppError('invalid_link', 'This sign-in link is invalid or expired. Request a new link.', 401);

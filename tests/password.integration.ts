@@ -14,8 +14,8 @@ async function call(path: string, body: unknown, jar: Jar = { cookie: '' }) {
 async function signInByLink(email: string) {
   const jar = { cookie: '' };
   const link = await call('auth/link', { email });
-  const token = new URLSearchParams(new URL(link.body.localLink).hash.slice(1)).get('token');
-  assert.equal((await call('auth/exchange', { token }, jar)).status, 200);
+  const parts = new URLSearchParams(new URL(link.body.localLink).hash.slice(1)); const credentials = parts.has('access') ? { accessToken: parts.get('access') } : { token: parts.get('token') };
+  assert.equal((await call('auth/exchange', credentials, jar)).status, 200);
   return jar;
 }
 

@@ -4,6 +4,7 @@ import nodemailer from 'nodemailer';
 import { sql } from './db';
 import { config } from './config';
 import { modules } from './course';
+import { createAccessLink } from './access-links';
 import { serviceClient } from './supabase-admin';
 import { requestLink } from './auth';
 
@@ -93,7 +94,7 @@ async function fromOutbox(event: Row, crowd: Awaited<ReturnType<typeof people>>)
       // Поздно приглашённый получает ближайшие события в приглашении, без пачки пропущенных напоминаний.
       const [next] = await sql`select * from lms.sessions where starts_at>now() order by starts_at limit 1`;
       const closing = new Date(owner.access_ends_at).getTime() - Date.now() < 7 * DAY;
-      return [{ key: key(owner), kind: 'enrollment.invited', recipient: owner, link: '/?module=0', subject: 'Welcome to Slot Design — your course access', body: `${greet(owner)}Welcome to Slot Design. Your course access is ready.\n\nOpen your personal sign-in link:\n{{SIGN_IN_LINK}}\n\n${owner.password_set_at ? 'Choose “Continue to course” to open the LMS. Your existing password still works; you do not need to register again.' : 'Choose “Continue to course”, create your password, and Module 0 will open with seven introductory videos and English subtitles. Next time, sign in with your email and password.'}\n\nThe link is for you only, works once, and expires soon. If it has expired, request a new link on the LMS sign-in page.${next ? `\n\nFirst live session: ${next.title}, ${when(next.starts_at, owner.timezone)}. You will get reminders 24 hours and 1 hour before each session, and 24 hours before each homework deadline if you have not submitted yet.` : ''}\n\nYour access ends on ${when(owner.access_ends_at, owner.timezone)}.${closing ? ' That is less than seven days from now.' : ''}` }];
+      return [{ key: key(owner), kind: 'enrollment.invited', recipient: owner, link: '/?module=0', subject: 'Welcome to Slot Design — your course access', body: `${greet(owner)}Welcome to Slot Design. Your course access is ready.\n\nOpen your personal sign-in link:\n{{SIGN_IN_LINK}}\n\n${owner.password_set_at ? 'Choose “Continue to course” to open the LMS. Your existing password still works; you do not need to register again.' : 'Choose “Continue to course”, create your password, and Module 0 will open with seven introductory videos and English subtitles. Next time, sign in with your email and password.'}\n\nThis personal link has no time limit while your course access is active and can be used again. Keep it private and do not forward it.${next ? `\n\nFirst live session: ${next.title}, ${when(next.starts_at, owner.timezone)}. You will get reminders 24 hours and 1 hour before each session, and 24 hours before each homework deadline if you have not submitted yet.` : ''}\n\nYour access ends on ${when(owner.access_ends_at, owner.timezone)}.${closing ? ' That is less than seven days from now.' : ''}` }];
     }
     case 'session.changed': {
       const [x] = await sql`select * from lms.sessions where id=${event.payload.sessionId}`; if (!x) return [];
@@ -224,15 +225,16 @@ export function mailProvider(): Provider | null {
 
 // Фрагмент URL не отправляется серверу при открытии письма и не попадает в access log.
 async function welcomeLink(email: string) {
-  if (config().mode === 'local') {
-    const result = await requestLink(email);
-    if (!('localLink' in result)) throw new Error('Local invitation link is unavailable.');
+  const [person]=await sql`select role from lms.profiles where email=${email}`;
+  if(person?.role==='participant') return createAccessLink(email);
+  if(config().mode==='local') {
+    const result=await requestLink(email);
+    if(!('localLink' in result)) throw new Error('Local team link unavailable.');
     return result.localLink;
   }
-  const { data, error } = await serviceClient().auth.admin.generateLink({ type: 'magiclink', email });
-  const token = data?.properties?.hashed_token;
-  if (error || !token) throw new Error('Invitation link could not be generated.');
-  return `${config().origin}/#token=${encodeURIComponent(token)}`;
+  const {data,error}=await serviceClient().auth.admin.generateLink({type:'magiclink',email});
+  if(error||!data.properties?.hashed_token) throw new Error('Team link unavailable.');
+  return `${config().origin}/#token=${encodeURIComponent(data.properties.hashed_token)}`;
 }
 
 export async function deliver(now = new Date(), provider = mailProvider()) {

@@ -69,14 +69,14 @@ function nextStep(assignment: Row | undefined, work: Row | undefined, draft: Row
 function SignIn({ local, onSuccess, reauth = false }: { local: boolean; onSuccess: () => void; reauth?: boolean }) {
   const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [message, setMessage] = useState(''); const [link, setLink] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   const [token, setToken] = useState('');
-  // Новые письма несут token во фрагменте URL; query остаётся для уже отправленных ссылок.
-  // code — стандартное письмо Supabase (PKCE). Ссылка тратится только после нажатия Continue.
+  // Секреты ссылок находятся во фрагменте URL; query поддерживается только для старых писем.
+  // code — старое письмо Supabase (PKCE); новые access-ссылки не расходуются при входе.
   useEffect(() => {
     const params = new URLSearchParams(location.search); const hash = new URLSearchParams(location.hash.slice(1));
-    const value = hash.get('token') || params.get('token') || params.get('token_hash'); const code = params.get('code'); const flow = params.get('sb_flow_id');
-    if (value) setToken(value); else if (code) setToken(`code:${code}${flow ? `:${flow}` : ''}`);
+    const access = hash.get('access'); const value = hash.get('token') || params.get('token') || params.get('token_hash'); const code = params.get('code'); const flow = params.get('sb_flow_id');
+    if (access) setToken(`access:${access}`); else if (value) setToken(value); else if (code) setToken(`code:${code}${flow ? `:${flow}` : ''}`);
     if (params.get('error') || hash.get('error')) setError('This sign-in link is invalid or expired. Request a new link.');
-    if (value || code || params.get('error') || hash.get('error')) history.replaceState(null, '', '/');
+    if (access || value || code || params.get('error') || hash.get('error')) history.replaceState(null, '', '/');
   }, []);
   async function signIn(authenticate: () => Promise<unknown>) {
     if (busy) return;
@@ -88,12 +88,12 @@ function SignIn({ local, onSuccess, reauth = false }: { local: boolean; onSucces
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }
-  async function enter(value: string) { await signIn(() => api('auth/exchange', value.startsWith('code:') ? (([code, flowId]) => flowId ? { code, flowId } : { code })(value.slice(5).split(':')) : { token: value })); }
+  async function enter(value: string) { await signIn(() => api('auth/exchange', value.startsWith('access:') ? { accessToken: value.slice(7) } : value.startsWith('code:') ? (([code, flowId]) => flowId ? { code, flowId } : { code })(value.slice(5).split(':')) : { token: value })); }
   return <div className={reauth ? 'reauth' : 'login-shell'}><section className="login-card">
     <div className="brand"><img className="brand-logo" src="/brand/talentgrator.png" alt="Talentgrator" width={72} height={44}/><span>Slot design</span></div>
     <p className="eyebrow">FROM IDEA TO RELEASE</p><h1>{reauth ? 'Sign in to continue' : 'A space to build your next idea.'}</h1>
     <p className="muted">Your course, work in progress and expert feedback, together.</p>
-    {token ? <><p>Continue to open your course. This link can be used once.</p><button disabled={busy} onClick={() => enter(token)}>Continue to course</button></> : <>
+    {token ? <><p>{token.startsWith('access:') ? 'Continue to open your course. Keep this personal link private. It has no time limit while your course access is active.' : 'Continue to open your course. This link can be used once.'}</p><button disabled={busy} onClick={() => enter(token)}>Continue to course</button></> : <>
       <form onSubmit={async e => { e.preventDefault(); await signIn(() => api('auth/password-login', { email, password })); }}>
         <label htmlFor="email">Email address</label><input id="email" type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} required placeholder="you@example.com" />
         <label htmlFor="password">Password</label><input id="password" type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required />
@@ -105,7 +105,7 @@ function SignIn({ local, onSuccess, reauth = false }: { local: boolean; onSucces
     <p className="muted small">Access is by invitation.</p><ErrorBox error={error} />
     <TermsLink/>
     {message && <p role="status">{message}</p>}
-    {local && <div className="test-mail"><strong>Local test mailbox</strong><p>Use alex@example.test (participant), expert@example.test or admin@example.test. No real email is sent.</p>{link && <button className="secondary" onClick={() => enter(new URLSearchParams(new URL(link).hash.slice(1)).get('token')!)} disabled={busy}>Open test sign-in link</button>}</div>}
+    {local && <div className="test-mail"><strong>Local test mailbox</strong><p>Use alex@example.test (participant), expert@example.test or admin@example.test. No real email is sent.</p>{link && <button className="secondary" onClick={() => { const parts=new URLSearchParams(new URL(link).hash.slice(1)); void enter(parts.has('access') ? `access:${parts.get('access')!}` : parts.get('token')!); }} disabled={busy}>Open test sign-in link</button>}</div>}
   </section><aside className="login-aside"><p>Explore the idea.<br/>Make the choices.<br/><em>Build the concept.</em></p><small>Live sessions on Sundays, 15:00 CET · 15 November–20 December 2026<br/>Final pitch in January 2027 · Europe/Berlin</small></aside></div>;
 }
 
