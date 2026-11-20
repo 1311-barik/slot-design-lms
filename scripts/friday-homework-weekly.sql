@@ -8,6 +8,8 @@ with due_assignments as (
     and a.due_at > now()
     and (a.due_at at time zone 'Europe/Berlin')::date =
         (now() at time zone 'Europe/Berlin')::date
+    and extract(hour from a.due_at at time zone 'Europe/Berlin') = 23
+    and extract(minute from a.due_at at time zone 'Europe/Berlin') = 59
 ), missing as (
   select p.id as recipient_id, a.module, a.title
   from lms.profiles p cross join due_assignments a
