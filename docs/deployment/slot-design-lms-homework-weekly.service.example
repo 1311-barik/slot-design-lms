@@ -1,0 +1,16 @@
+[Unit]
+Description=Slot Design LMS weekly in-app homework reminders
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=lms
+Group=lms
+EnvironmentFile=/etc/slot-design-lms/env
+ExecStart=/opt/slot-design-node-v24.15.0/bin/node /opt/slot-design-lms/ops/run-friday-homework.mjs weekly
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+UMask=0077

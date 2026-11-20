@@ -1,0 +1,11 @@
+[Unit]
+Description=Remind students with unsubmitted homework in LMS every Friday at 12:00 CET
+
+[Timer]
+OnCalendar=Fri *-*-* 11:00:00 UTC
+AccuracySec=1s
+Persistent=false
+Unit=slot-design-lms-homework-weekly.service
+
+[Install]
+WantedBy=timers.target
