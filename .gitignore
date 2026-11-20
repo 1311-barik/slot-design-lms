@@ -42,6 +42,7 @@ docs/*
 !docs/BACKUP-RESTORE.md
 !docs/architecture.md
 !docs/ONBOARDING.md
+!docs/FRIDAY-HOMEWORK-NOTICES.md
 !docs/agents/
 !docs/deployment/
 docs/deployment/*
@@ -50,6 +51,10 @@ docs/deployment/*
 !docs/deployment/nginx-log-format.conf.example
 !docs/deployment/slot-design-lms.service.example
 !docs/deployment/slot-design-lms-mail.service.example
+!docs/deployment/slot-design-lms-homework-first.service.example
+!docs/deployment/slot-design-lms-homework-first.timer.example
+!docs/deployment/slot-design-lms-homework-weekly.service.example
+!docs/deployment/slot-design-lms-homework-weekly.timer.example
 
 # Личные вспомогательные скрипты настройки существующего окружения.
 scripts/set-db-password.py

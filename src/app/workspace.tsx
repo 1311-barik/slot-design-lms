@@ -591,7 +591,7 @@ function PresentationNotice({ data }: { data: Data }) {
   return <section className="session-card"><p className="eyebrow">PROJECT PRESENTATION</p><h2>{presentationLabel(current, data)}</h2>{current ? <>{current.level && <p className="small"><strong>Level:</strong> {levels[current.level]}</p>}{current.comment && <p className="preserve">{current.comment}</p>}<p className="muted small">Recorded {date(current.created_at)}. Submitting a new package later does not change this record.</p></> : <p className="muted small">Your expert records your project presentation after the shared session. Submitting your package does not mark it as held.</p>}</section>;
 }
 
-// LMS-11: уведомления в интерфейсе повторяют письма; ссылка ведёт к модулю или кабинету команды.
+// LMS-11: уведомления могут повторять письма или существовать только в кабинете.
 function Notifications({ data, refresh, onAuth }: { data: Data; refresh: () => Promise<void>; onAuth: () => void }) {
   const [open,setOpen] = useState(false); const [error,setError] = useState('');
   const mine = data.notifications.filter(n => n.recipient_id === data.me.id && !['cancelled','missed'].includes(n.status)).slice(0, 30);
@@ -599,7 +599,7 @@ function Notifications({ data, refresh, onAuth }: { data: Data; refresh: () => P
   async function read(ids: string[]) { if (!ids.length) return; setError(''); try { await cmd('notification.read', { ids }); await refresh(); } catch(e) { setError((e as Error).message); if ((e as RequestError).code === 'unauthenticated') onAuth(); } }
   return <div className="notifications"><button className="secondary small-button" aria-expanded={open} aria-controls="notification-panel" onClick={() => setOpen(!open)}>Notifications{unread.length > 0 && <span className="count">{unread.length}</span>}</button>
     {open && <section id="notification-panel" className="notification-panel" aria-label="Notifications"><div className="section-heading"><h2>Notifications</h2>{unread.length > 0 && <button className="text-button" onClick={() => read(unread.map(n => n.id))}>Mark all as read</button>}</div><ErrorBox error={error}/>
-      {mine.length ? <ul>{mine.map(n => <li key={n.id} className={n.read_at ? '' : 'unread'}><a href={n.link_path} onClick={() => { if (!n.read_at) void cmd('notification.read', { ids: [n.id] }).catch(() => {}); }}>{n.subject}</a><small>{date(n.created_at)}</small>{!n.read_at && <button className="text-button" onClick={() => read([n.id])}>Mark as read</button>}</li>)}</ul> : <p className="muted small">No notifications yet.</p>}
+      {mine.length ? <ul>{mine.map(n => <li key={n.id} className={n.read_at ? '' : 'unread'}><a href={n.link_path} onClick={() => { if (!n.read_at) void cmd('notification.read', { ids: [n.id] }).catch(() => {}); }}>{n.subject}</a>{n.kind.endsWith('.in_app') && <span className="small">{n.body}</span>}<small>{date(n.created_at)}</small>{!n.read_at && <button className="text-button" onClick={() => read([n.id])}>Mark as read</button>}</li>)}</ul> : <p className="muted small">No notifications yet.</p>}
       <p className="small muted">Time zone for emails: Account.</p></section>}</div>;
 }
 function TimeZone({ data, refresh, onAuth }: { data: Data; refresh: () => Promise<void>; onAuth: () => void }) {
@@ -615,8 +615,9 @@ function TimeZone({ data, refresh, onAuth }: { data: Data; refresh: () => Promis
 const mailStatuses: Record<string, string> = { pending: 'Queued', sending: 'Sending', sent: 'Accepted by provider', failed: 'Failed', unknown: 'Unknown result', cancelled: 'Cancelled', missed: 'Missed' };
 function MailAdmin({ data, refresh, onAuth }: { data: Data; refresh: () => Promise<void>; onAuth: () => void }) {
   const [status,setStatus] = useState(''); const [run,setRun] = useState(''); const save = useSave(refresh, onAuth);
-  const rows = data.notifications.filter(n => !status || n.status === status);
-  const counts = Object.keys(mailStatuses).map(k => [k, data.notifications.filter(n => n.status === k).length] as const).filter(([, c]) => c);
+  const emails = data.notifications.filter(n => !n.kind.endsWith('.in_app'));
+  const rows = emails.filter(n => !status || n.status === status);
+  const counts = Object.keys(mailStatuses).map(k => [k, emails.filter(n => n.status === k).length] as const).filter(([, c]) => c);
   const person = (id: string) => data.people.find(p => p.id === id);
   return <><div className="page-heading"><p className="eyebrow">ADMINISTRATION</p><h1>Email</h1><p className="muted">Course emails and reminders. “Accepted by provider” does not mean the email reached the inbox.</p></div>
     <section className="admin-card"><p><strong>Provider:</strong> {data.mail?.provider === 'local' ? 'Local test mailbox — emails are written to files on this computer, nothing is sent.' : data.mail?.provider ? data.mail.provider : 'Not configured — emails stay queued until a provider is set up.'}</p>

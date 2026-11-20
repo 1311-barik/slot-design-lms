@@ -1,0 +1,11 @@
+[Unit]
+Description=Send first Friday homework notice at 12:00 CET, 20 November 2026
+
+[Timer]
+OnCalendar=2026-11-20 11:00:00 UTC
+AccuracySec=1s
+Persistent=false
+Unit=slot-design-lms-homework-first.service
+
+[Install]
+WantedBy=timers.target
