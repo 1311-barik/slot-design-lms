@@ -4,6 +4,7 @@ import { isPackage, validateSubmission, type AssignmentSpec, type Payload } from
 import { modules } from '@/lib/course';
 import { earlyCommencement } from '@/lib/early-commencement';
 import { accessEndFromDate } from '@/lib/access-date';
+import { courseViewUrl, studentPreviewData, studentViewRequested } from '@/lib/student-preview';
 
 type Row = { id: string; [key: string]: any };
 type Data = { consentRequired?: boolean; me: Row; assignments: Row[]; works: Row[]; drafts: Row[]; submissions: Row[]; reviews: Row[]; reviewDrafts: Row[]; files: Row[]; people: Row[]; project: Row | null; packageItems: Row[]; questions: Row[]; answers: Row[]; materials: Row[]; materialFiles: Row[]; progress: Row[]; sessions: Row[]; now: string; presentations: Row[]; reviewers: Row[]; notifications: Row[]; feedback: Row[]; earlyCommencementConsents: Row[]; projects: Row[]; mail: { provider: string | null } | null };
@@ -49,7 +50,7 @@ function ErrorBox({ error }: { error: string }) { return error ? <div className=
 const moduleFromUrl = () => { const raw = new URLSearchParams(location.search).get('module'); if (raw === 'project') return PROJECT; const value = Number(raw); return raw !== null && raw !== '' && Number.isInteger(value) && value >= 0 && value < modules.length ? value : 1; };
 // Первый вход без модуля в адресе: до первого занятия — модуль 0 (стартовое видео), потом — модуль последнего начавшегося занятия.
 const startModule = (sessions: Row[], now: number) => { const started = sessions.filter(x => x.module >= 1 && new Date(x.starts_at).getTime() <= now).map(x => x.module); return started.length ? Math.max(...started) : 0; };
-const urlFor = (module: number) => `?module=${module === PROJECT ? 'project' : module}`;
+const urlFor = (module: number, student = studentViewRequested(location.search)) => courseViewUrl(module === PROJECT ? 'project' : module, student);
 // Подсказка сверху повторяет состояние работы ниже, а не общий призыв к отправке.
 function nextStep(assignment: Row | undefined, work: Row | undefined, draft: Row | undefined) {
   if (!assignment) return 'Materials and assignments will appear here when published.';
@@ -120,25 +121,35 @@ function ReauthDialog({ local, onSuccess }: { local: boolean; onSuccess: () => v
 }
 
 export default function Workspace() {
-  const [data, setData] = useState<Data | null>(null); const [local, setLocal] = useState(false); const [loading, setLoading] = useState(true); const [error, setError] = useState(''); const [module, setModule] = useState(1); const [reauth, setReauth] = useState(false); const [activeReview, setActiveReview] = useState(''); const [dirty, setDirty] = useState(false); const [staffTab, setStaffTab] = useState<Tab>('main'); const [account, setAccount] = useState(false); const [feedback, setFeedback] = useState(false);
+  const [workspace, setData] = useState<Data | null>(null); const [local, setLocal] = useState(false); const [loading, setLoading] = useState(true); const [error, setError] = useState(''); const [module, setModule] = useState(1); const [reauth, setReauth] = useState(false); const [activeReview, setActiveReview] = useState(''); const [dirty, setDirty] = useState(false); const [staffTab, setStaffTab] = useState<Tab>('main'); const [account, setAccount] = useState(false); const [feedback, setFeedback] = useState(false);
+  const [studentView, setStudentView] = useState(false);
   const [queueFilter, setQueueFilter] = useState<QueueFilter>({ assignment: '', status: 'waiting', overdue: false }); const [journalFilter, setJournalFilter] = useState<JournalFilter>({ module: '', assignment: '', status: '', reviewer: '', late: false });
   const startApplied = useRef(false);
   const load = useCallback(async () => { try { const next = await api('workspace'); if (!startApplied.current && !next.consentRequired) { startApplied.current = true; if (next.me.role === 'participant' && !next.me.password_set_at) { setModule(0); history.replaceState(null, '', urlFor(0)); } else if (next.me.role === 'participant' && !new URLSearchParams(location.search).get('module')) setModule(startModule(next.sessions, new Date(next.now).getTime())); if (next.me.role === 'admin') setStaffTab('activity'); } setData(old => { if (old && old.me.id !== next.me.id) { location.reload(); return old; } return next; }); setReauth(false); setError(''); } catch (e) { if ((e as RequestError).code === 'unauthenticated') { setReauth(true); } else setError((e as Error).message); } finally { setLoading(false); } }, []);
-  const current = useRef({ module, dirty }); current.current = { module, dirty };
-  useEffect(() => { api('config').then(r => setLocal(r.local)).catch(e => setError(e.message)); setModule(moduleFromUrl()); void load(); }, [load]);
+  const current = useRef({ module, dirty, studentView }); current.current = { module, dirty, studentView };
+  useEffect(() => { api('config').then(r => setLocal(r.local)).catch(e => setError(e.message)); setModule(moduleFromUrl()); setStudentView(studentViewRequested(location.search)); void load(); }, [load]);
   useEffect(() => { const listener = (e: BeforeUnloadEvent) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } }; window.addEventListener('beforeunload', listener); return () => window.removeEventListener('beforeunload', listener); }, [dirty]);
   useEffect(() => {
     // Back/Forward меняют модуль так же, как меню: несохранённый текст требует подтверждения.
-    const listener = () => { const next = moduleFromUrl(); if (next === current.current.module) return; if (current.current.dirty && !confirm('You have unsaved text. Leave this page and discard those changes?')) { history.pushState(null, '', urlFor(current.current.module)); return; } setDirty(false); setModule(next); };
+    const listener = () => { const next = moduleFromUrl(); const nextStudent = studentViewRequested(location.search); if (next === current.current.module && nextStudent === current.current.studentView) return; if (current.current.dirty && !confirm('You have unsaved text. Leave this page and discard those changes?')) { history.pushState(null, '', urlFor(current.current.module, current.current.studentView)); return; } setDirty(false); setModule(next); setStudentView(nextStudent); };
     window.addEventListener('popstate', listener); return () => window.removeEventListener('popstate', listener);
   }, []);
   function chooseReview(id: string, tab: Tab = 'main') { if (!dirty || confirm('Discard your unsaved feedback and return to the review queue?')) { setDirty(false); setActiveReview(id); setStaffTab(tab); } }
   function move(next: number) { if (!dirty || confirm('You have unsaved text. Leave this page and discard those changes?')) { setDirty(false); setModule(next); if (next !== module) history.pushState(null, '', urlFor(next)); } }
+  function switchView() {
+    if (workspace?.me.role !== 'admin' || (dirty && !confirm('You have unsaved text. Switch views and discard those changes?'))) return;
+    const nextStudent = !studentView;
+    const nextModule = nextStudent && !new URLSearchParams(location.search).has('module') ? startModule(workspace.sessions, new Date(workspace.now).getTime()) : module;
+    setDirty(false); setActiveReview(''); setAccount(false); setFeedback(false); setModule(nextModule); setStudentView(nextStudent);
+    history.pushState(null, '', urlFor(nextModule, nextStudent));
+  }
+  const preview = workspace?.me.role === 'admin' && studentView;
+  const data = preview && workspace ? studentPreviewData(workspace) : workspace;
   if (loading) return <div className="loading" role="status">Opening your workspace…</div>;
   if (!data) return <>{error && <div className="startup-error"><ErrorBox error={error}/><button onClick={load}>Try again</button></div>}<SignIn local={local} onSuccess={load}/></>;
   if (data.me.role === 'participant' && data.consentRequired) return <div className="first-password consent-gate"><p className="small">Signed in as <strong>{data.me.name}</strong></p><AccountConsent refresh={load} onAuth={() => setReauth(true)}/><button className="text-button" onClick={async () => { await api('auth/logout', {}); location.reload(); }}>Sign out</button>{reauth && <ReauthDialog local={local} onSuccess={load}/>}</div>;
   if (data.me.role === 'participant' && !data.me.password_set_at) return <div className="first-password"><PasswordPrompt refresh={load} onAuth={() => setReauth(true)} done={() => { setModule(0); history.replaceState(null, '', urlFor(0)); }}/>{reauth && <ReauthDialog local={local} onSuccess={load}/>}</div>;
-  const staff = data.me.role !== 'participant';
+  const staff = data.me.role !== 'participant' && !preview;
   const auth = () => setReauth(true);
   const inModule = data.assignments.filter(a => a.module === module);
   // Подсказка берёт первое задание модуля, где участнику есть что делать; иначе — первое задание.
@@ -154,6 +165,7 @@ export default function Workspace() {
     <a className="skip" href="#main">Skip to content</a>
     <div className="app-shell"><aside className="sidebar"><a href="/" className="brand"><img className="brand-logo" src="/brand/talentgrator.png" alt="Talentgrator" width={72} height={44}/><span>Slot design<br/><em>From idea to release</em></span></a>
       <div className="cohort"><span className="dot"/> November 2026 cohort</div>
+      {workspace?.me.role === 'admin' && <button type="button" className="secondary full view-switch" aria-pressed={preview} onClick={switchView}>{preview ? 'Back to administrator' : 'View as student'}</button>}
       <p className="nav-label">{staff ? 'WORKSPACE' : 'YOUR COURSE'}</p>
       <nav aria-label="Course navigation">{staff ? <>
         {data.me.role === 'admin' && <button className={`nav-item ${staffTab === 'activity' ? 'selected' : ''}`} aria-current={staffTab === 'activity' ? 'page' : undefined} onClick={() => chooseReview('', 'activity')}>Activity</button>}
@@ -169,18 +181,19 @@ export default function Workspace() {
         {modules.map((name, index) => <button key={name} onClick={() => move(index)} className={`nav-item ${module === index ? 'selected' : ''}`} aria-current={module === index ? 'page' : undefined}><span className="nav-number">{String(index).padStart(2,'0')}</span><span>{name}</span></button>)}
       </>}</nav>
       <div className="sidebar-bottom"><span className="avatar">{data.me.name.slice(0,1)}</span><div><strong>{data.me.name}</strong><small>{data.me.role === 'reviewer' ? 'Expert' : data.me.role}</small></div><button className="text-button" onClick={() => setAccount(true)}>Account</button><button className="text-button" onClick={async () => { if (dirty && !confirm('Discard unsaved changes and sign out?')) return; await api('auth/logout', {}); location.reload(); }}>Sign out</button></div>
-    </aside><main id="main" className="main"><header className="topbar"><span>{staff ? 'Team workspace' : 'Learning workspace'}</span><div className="topbar-actions">{!staff && <button className="secondary small-button" onClick={() => setFeedback(true)}>Feedback</button>}<Notifications data={data} refresh={load} onAuth={auth}/></div><span className="session-note">{upcoming ? <>{sessionState(upcoming, now) === 'started' ? 'Live session started' : 'Next live session'} <strong>{date(upcoming.starts_at)}</strong></> : 'No upcoming live sessions'}</span></header>
+    </aside><main id="main" className="main"><header className="topbar"><span>{staff ? 'Team workspace' : 'Learning workspace'}</span><div className="topbar-actions">{!staff && !preview && <button className="secondary small-button" onClick={() => setFeedback(true)}>Feedback</button>}{!preview && <Notifications data={data} refresh={load} onAuth={auth}/>}</div><span className="session-note">{upcoming ? <>{sessionState(upcoming, now) === 'started' ? 'Live session started' : 'Next live session'} <strong>{date(upcoming.starts_at)}</strong></> : 'No upcoming live sessions'}</span></header>
+      {preview && <aside className="student-preview-banner" role="status"><strong>Student preview</strong><span>Explore the published course and watch videos. Homework, messages and study progress are read-only.</span></aside>}
       <ErrorBox error={error}/>{error && <button className="secondary" onClick={load}>Retry loading</button>}
       {staff ? activeReview ? <Expert data={data} refresh={load} active={activeReview} setActive={id => chooseReview(id, staffTab)} onAuth={auth} onDirty={setDirty} filter={queueFilter} setFilter={setQueueFilter} now={now}/> : staffTab === 'journal' ? <Journal data={data} now={now} filter={journalFilter} setFilter={setJournalFilter} open={id => chooseReview(id, 'journal')}/> : staffTab === 'presentations' ? <Presentations data={data} refresh={load} onAuth={auth}/> : staffTab === 'email' ? <MailAdmin data={data} refresh={load} onAuth={auth}/> : staffTab === 'feedback' ? <FeedbackAdmin data={data}/> : staffTab === 'activity' ? <ActivityDashboard data={data} now={now} open={id => chooseReview(id, 'activity')}/> : staffTab === 'questions' ? <TeamQuestions data={data} refresh={load} onAuth={auth}/> : staffTab === 'content' ? data.me.role === 'admin' ? <ContentAdmin data={data} refresh={load} onAuth={auth} onDirty={setDirty}/> : <TeamMaterials data={data}/> : data.me.role === 'admin' ? <Admin data={data} refresh={load} local={local}/> : <Expert data={data} refresh={load} active={activeReview} setActive={id => chooseReview(id, staffTab)} onAuth={auth} onDirty={setDirty} filter={queueFilter} setFilter={setQueueFilter} now={now}/>
-      : module === PROJECT ? <ProjectView data={data} refresh={load} onAuth={auth} open={move}/> : <>
+      : module === PROJECT ? <fieldset className="preview-fields" disabled={preview}><ProjectView data={data} refresh={load} onAuth={auth} open={move}/></fieldset> : <>
         <div className="page-heading"><p className="eyebrow">MODULE {String(module).padStart(2,'0')}</p><h1>{modules[module]}</h1><p className="muted">{module === 0 ? 'Get ready for the first shared session.' : 'Build your concept one considered decision at a time.'}</p></div>
         <div className="lesson-summary"><span className="lesson-icon" aria-hidden="true">↗</span><div><strong>{module === 0 ? 'Before we meet' : 'Your next step'}</strong><p>{module === 0 ? (data.materials.some(m => m.module === 0 && m.audience === 'participant' && m.open) ? 'Start with the welcome video below. Then note the theme and audience of the slot you want to build — you can change them later.' : 'Check your course access and the session schedule. Note the theme and audience of the slot you want to build — you can change them later. Welcome materials will appear here when published.') : summary}</p></div><span className="small muted">One shared cohort</span></div>
         {data.sessions.filter(x => x.module === module).map(x => <SessionCard key={x.id} session={x} now={now}/>)}
-        <Materials data={data} module={module} refresh={load} onAuth={auth}/>
-        {module === 0 && <ProjectHeader data={data} refresh={load} onAuth={auth}/>}
-        {inModule.map(a => <Assignment key={a.id} assignment={a} data={data} refresh={load} onAuth={auth} onDirty={setDirty}/>)}
+        <Materials data={data} module={module} refresh={load} onAuth={auth} readOnly={preview}/>
+        {module === 0 && <fieldset className="preview-fields" disabled={preview}><ProjectHeader data={data} refresh={load} onAuth={auth}/></fieldset>}
+        <fieldset className="preview-fields" disabled={preview}>{inModule.map(a => <Assignment key={a.id} assignment={a} data={data} refresh={load} onAuth={auth} onDirty={setDirty}/>)}</fieldset>
         {module === 7 && <PresentationNotice data={data}/>}
-        <Questions data={data} module={module} refresh={load} onAuth={auth}/>
+        <fieldset className="preview-fields" disabled={preview}><Questions data={data} module={module} refresh={load} onAuth={auth}/></fieldset>
       </>}
       <footer className="footer">Slot Design · From idea to release<span>Course times: CET · Europe/Berlin</span></footer>
     </main></div>{reauth && <ReauthDialog local={local} onSuccess={load}/>}
@@ -428,13 +441,13 @@ function MaterialBody({ material, data, studied = false }: { material: Row; data
 }
 
 // LMS-02/LMS-10: закрытый материал показывает только название и время открытия; отметка «изучено» не связана с ДЗ.
-function Materials({ data, module, refresh, onAuth }: { data: Data; module: number; refresh: () => Promise<void>; onAuth: () => void }) {
+function Materials({ data, module, refresh, onAuth, readOnly = false }: { data: Data; module: number; refresh: () => Promise<void>; onAuth: () => void; readOnly?: boolean }) {
   const [busy,setBusy] = useState(''); const [error,setError] = useState('');
   const list = data.materials.filter(m => m.module === module && m.audience === 'participant');
   const open = list.filter(m => m.open); const studied = open.filter(m => data.progress.some(p => p.material_id === m.id && p.owner_id === data.me.id));
   if (!list.length) return <section className="materials"><h2>Materials</h2><p className="muted">Materials for this module will appear here when published.</p></section>;
   return <section className="materials"><div className="section-heading"><h2>Materials</h2>{open.length > 0 && <span className="small muted" role="status">{studied.length} of {open.length} studied</span>}</div><ErrorBox error={error}/>
-    {list.map(m => { const done = studied.includes(m); return <article className={`material ${m.open ? '' : 'locked'}`} key={m.id}><div className="section-heading"><h3>{m.title}</h3>{m.open && <label className="studied"><input type="checkbox" checked={done} disabled={busy === m.id} onChange={async e => { setBusy(m.id); setError(''); try { await cmd('material.progress',{ materialId: m.id, studied: e.target.checked }); await refresh(); } catch(err) { setError((err as Error).message); if ((err as RequestError).code === 'unauthenticated') onAuth(); } finally { setBusy(''); } }}/>Studied</label>}</div>
+    {list.map(m => { const done = studied.includes(m); return <article className={`material ${m.open ? '' : 'locked'}`} key={m.id}><div className="section-heading"><h3>{m.title}</h3>{m.open && <label className="studied"><input type="checkbox" checked={done} disabled={readOnly || busy === m.id} onChange={async e => { if (readOnly) return; setBusy(m.id); setError(''); try { await cmd('material.progress',{ materialId: m.id, studied: e.target.checked }); await refresh(); } catch(err) { setError((err as Error).message); if ((err as RequestError).code === 'unauthenticated') onAuth(); } finally { setBusy(''); } }}/>Studied</label>}</div>
       {m.open ? <MaterialBody material={m} data={data} studied={done}/> : <p className="muted small">Opens {date(m.opens_at)}.</p>}</article>; })}
   </section>;
 }
