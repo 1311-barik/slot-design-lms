@@ -19,9 +19,9 @@ async function requireAdmin(tx: Tx) {
   if (!allowed.ok) throw new AppError('forbidden', 'Administrator access is required.', 403);
 }
 
-export async function readWorkspace(actor: string) {
+export async function readWorkspace(actor: string, options: { scheduleNotifications?: boolean } = {}) {
   return transaction(actor, async tx => {
-    await tx`select lms.schedule_module_feedback()`;
+    if (options.scheduleNotifications !== false) await tx`select lms.schedule_module_feedback()`;
     const feedbackRequests = await tx`select module,request_after,lms.feedback_required(module) as required from lms.module_feedback_prompts order by module`;
     const [me] = await tx`select id,name,email,role,access_ends_at,timezone,password_set_at from lms.profiles where id=${actor}`;
     const [assignments, works, drafts, submissions, reviews, reviewDrafts, files, people, claims, projects, packageItems, questions, answers] = await Promise.all([
@@ -39,7 +39,7 @@ export async function readWorkspace(actor: string) {
       tx`select * from lms.material_files`, tx`select * from lms.material_progress`, tx`select * from lms.sessions order by starts_at`,
       tx`select clock_timestamp() as now`, tx`select * from lms.presentations order by created_at`, tx`select * from lms.reviewers`,
       // Администратор видит очередь писем; остальные — только свои уведомления (RLS).
-      tx`select * from lms.notifications order by created_at desc limit ${me.role === 'admin' ? 500 : 50}`,
+      me.role === 'admin' ? tx`select * from lms.notifications order by created_at desc limit 500` : tx`select * from lms.notifications order by created_at desc`,
       tx`select * from lms.feedback order by created_at desc`,
       tx`select * from lms.early_commencement_consents order by accepted_at desc`,
     ]);
