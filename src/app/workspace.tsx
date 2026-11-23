@@ -413,6 +413,7 @@ function SessionCard({ session, now }: { session: Row; now: number }) {
 
 function LessonVideo({ fileId, captionId, title, studied }: { fileId: string; captionId?: string; title: string; studied: boolean }) {
   const video = useRef<HTMLVideoElement>(null);
+  const [frameRatio, setFrameRatio] = useState(16 / 9);
   const [captionsOn, setCaptionsOn] = useState(false);
   const [replaying, setReplaying] = useState(false);
   const covered = studied && !replaying;
@@ -420,7 +421,7 @@ function LessonVideo({ fileId, captionId, title, studied }: { fileId: string; ca
   useEffect(() => { if (video.current?.textTracks[0]) video.current.textTracks[0].mode = captionsOn ? 'showing' : 'disabled'; }, [captionsOn, captionId]);
   return <div className="lesson-player">
     <div className={`lesson-video-wrap ${covered ? 'is-studied' : ''}`}>
-      <video ref={video} className="lesson-video" controls={!covered} playsInline preload="metadata" aria-label={title} aria-hidden={covered} tabIndex={covered ? -1 : undefined} src={`/api/v1/files/${fileId}/play`}>
+      <video ref={video} className="lesson-video" style={{ height: `calc(100cqw / ${frameRatio} + 64px)` }} onLoadedMetadata={event => { const v = event.currentTarget; if (v.videoWidth && v.videoHeight) setFrameRatio(v.videoWidth / v.videoHeight); }} controls={!covered} playsInline preload="metadata" aria-label={title} aria-hidden={covered} tabIndex={covered ? -1 : undefined} src={`/api/v1/files/${fileId}/play`}>
         {captionId && <track kind="captions" src={`/api/v1/files/${captionId}/captions`} srcLang="en" label="English"/>}
         Your browser cannot play this video. <a href={`/api/v1/files/${fileId}/download`}>Download it here</a>.
       </video>
