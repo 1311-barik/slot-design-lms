@@ -9,6 +9,7 @@ import { config } from '@/lib/config';
 import { downloadFile, playVideo, uploadFile } from '@/lib/files';
 import { sql } from '@/lib/db';
 import { earlyCommencement } from '@/lib/early-commencement';
+import { studentPreviewTarget } from '@/lib/student-preview-service';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 type Context = { params: Promise<{ path: string[] }> };
@@ -41,12 +42,21 @@ async function handle(request: Request, context: Context) {
   if (request.headers.get('host') !== new URL(cfg.origin).host) throw new AppError('origin', 'This application address is not allowed.', 403);
   if (request.method === 'POST' && request.headers.get('origin') !== cfg.origin) throw new AppError('origin', 'Refresh this page before trying again.', 403);
   const path = (await context.params).path.join('/');
+  const params = new URL(request.url).searchParams;
+  const preview = params.get('preview') === 'student';
+  if (preview && request.method !== 'GET') throw new AppError('preview_read_only', 'Student preview is read-only. Return to your own account to make changes.', 403);
   if (request.method === 'GET') {
     if (path === 'config') return response({ local: cfg.mode === 'local' });
-    const user = await actor();
+    const authenticated = await actor();
+    const previewContext = preview ? await studentPreviewTarget(authenticated, params.get('student')) : null;
+    const user = previewContext?.participantId || authenticated;
     const profile = await setupState(user);
-    if (path === 'workspace') return response(profile.role === 'participant' && (!profile.password_set_at || !profile.consent_recorded)
-      ? { me: profile, earlyCommencementConsents: [], consentRequired: !profile.consent_recorded } : await readWorkspace(user));
+    if (path === 'workspace') {
+      const data = profile.role === 'participant' && (!profile.password_set_at || !profile.consent_recorded)
+        ? { me: profile, earlyCommencementConsents: [], consentRequired: !profile.consent_recorded }
+        : await readWorkspace(user, { scheduleNotifications: !preview });
+      return response(previewContext ? { assignments: [], works: [], drafts: [], submissions: [], reviews: [], reviewDrafts: [], files: [], people: [], project: null, packageItems: [], questions: [], answers: [], materials: [], materialFiles: [], progress: [], sessions: [], presentations: [], reviewers: [], notifications: [], feedback: [], projects: [], mail: null, now: new Date().toISOString(), ...data, preview: previewContext } : data);
+    }
     requireSetupDone(profile);
     if (/^files\/[\da-f-]+\/captions$/.test(path)) {
       const { file, bytes } = await downloadFile(user, path.split('/')[1]);
