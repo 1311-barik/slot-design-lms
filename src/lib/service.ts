@@ -21,6 +21,8 @@ async function requireAdmin(tx: Tx) {
 
 export async function readWorkspace(actor: string) {
   return transaction(actor, async tx => {
+    await tx`select lms.schedule_module_feedback()`;
+    const feedbackRequests = await tx`select module,request_after,lms.feedback_required(module) as required from lms.module_feedback_prompts order by module`;
     const [me] = await tx`select id,name,email,role,access_ends_at,timezone,password_set_at from lms.profiles where id=${actor}`;
     const [assignments, works, drafts, submissions, reviews, reviewDrafts, files, people, claims, projects, packageItems, questions, answers] = await Promise.all([
       tx`select * from lms.assignments order by module`, tx`select * from lms.works`,
@@ -54,7 +56,7 @@ export async function readWorkspace(actor: string) {
     for (const work of works) if (work.owner_id === actor && !visibleAssignments.some(a => a.id === work.assignment_id)) {
       visibleAssignments.push({ id: work.assignment_id, module: work.module, spec: work.spec, revision: work.assignment_revision, published: false, due_at: null, late_policy: null });
     }
-    return jsonValue({ me, assignments: visibleAssignments.sort((a,b) => a.module-b.module || String(a.spec.title).localeCompare(b.spec.title)), works, drafts, submissions, reviews, reviewDrafts, files, people: visiblePeople, claims, presentations, reviewers, earlyCommencementConsents, notifications: admin ? notifications : notifications.filter(n => !['enrollment.invited','auth.link_requested'].includes(n.kind)), feedback, mail: admin ? { provider: mailProvider()?.name || null } : null, project: projects.find(p => p.owner_id === actor) || null, projects: admin ? projects : [], packageItems, questions, answers, materials: visibleMaterials, materialFiles, progress, sessions: visibleSessions, now: clock.now });
+    return jsonValue({ me, feedbackRequests, assignments: visibleAssignments.sort((a,b) => a.module-b.module || String(a.spec.title).localeCompare(b.spec.title)), works, drafts, submissions, reviews, reviewDrafts, files, people: visiblePeople, claims, presentations, reviewers, earlyCommencementConsents, notifications: admin ? notifications : notifications.filter(n => !['enrollment.invited','auth.link_requested'].includes(n.kind)), feedback, mail: admin ? { provider: mailProvider()?.name || null } : null, project: projects.find(p => p.owner_id === actor) || null, projects: admin ? projects : [], packageItems, questions, answers, materials: visibleMaterials, materialFiles, progress, sessions: visibleSessions, now: clock.now });
   });
 }
 
@@ -330,6 +332,7 @@ async function perform(tx: Tx, actor: string, action: string, input: unknown): P
       if (profile.role !== 'participant') throw new AppError('forbidden', 'Only participants send course feedback here.', 403);
       const [row] = await tx`insert into lms.feedback(owner_id,module,rating,body) values(${actor},${data.module},${data.rating},${data.body}) returning *`;
       await tx`insert into lms.outbox(kind,aggregate_id) values('feedback.created',${row.id})`;
+      await tx`update lms.notifications set read_at=coalesce(read_at,clock_timestamp()) where recipient_id=${actor} and kind='feedback.requested' and dedupe_key=${'module.feedback:' + data.module + ':' + actor}`;
       return row;
     }
     case 'notification.read': {

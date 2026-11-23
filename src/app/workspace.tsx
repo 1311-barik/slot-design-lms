@@ -7,7 +7,7 @@ import { accessEndFromDate } from '@/lib/access-date';
 import { courseViewUrl, studentPreviewData, studentViewRequested } from '@/lib/student-preview';
 
 type Row = { id: string; [key: string]: any };
-type Data = { consentRequired?: boolean; me: Row; assignments: Row[]; works: Row[]; drafts: Row[]; submissions: Row[]; reviews: Row[]; reviewDrafts: Row[]; files: Row[]; people: Row[]; project: Row | null; packageItems: Row[]; questions: Row[]; answers: Row[]; materials: Row[]; materialFiles: Row[]; progress: Row[]; sessions: Row[]; now: string; presentations: Row[]; reviewers: Row[]; notifications: Row[]; feedback: Row[]; earlyCommencementConsents: Row[]; projects: Row[]; mail: { provider: string | null } | null };
+type Data = { feedbackRequests?: { module: number; required: boolean }[]; consentRequired?: boolean; me: Row; assignments: Row[]; works: Row[]; drafts: Row[]; submissions: Row[]; reviews: Row[]; reviewDrafts: Row[]; files: Row[]; people: Row[]; project: Row | null; packageItems: Row[]; questions: Row[]; answers: Row[]; materials: Row[]; materialFiles: Row[]; progress: Row[]; sessions: Row[]; now: string; presentations: Row[]; reviewers: Row[]; notifications: Row[]; feedback: Row[]; earlyCommencementConsents: Row[]; projects: Row[]; mail: { provider: string | null } | null };
 type Tab = 'main' | 'questions' | 'content' | 'journal' | 'presentations' | 'email' | 'feedback' | 'activity';
 type QueueFilter = { assignment: string; status: string; overdue: boolean };
 type JournalFilter = { module: string; assignment: string; status: string; reviewer: string; late: boolean };
@@ -134,6 +134,7 @@ export default function Workspace() {
     const listener = () => { const next = moduleFromUrl(); const nextStudent = studentViewRequested(location.search); if (next === current.current.module && nextStudent === current.current.studentView) return; if (current.current.dirty && !confirm('You have unsaved text. Leave this page and discard those changes?')) { history.pushState(null, '', urlFor(current.current.module, current.current.studentView)); return; } setDirty(false); setModule(next); setStudentView(nextStudent); };
     window.addEventListener('popstate', listener); return () => window.removeEventListener('popstate', listener);
   }, []);
+  useEffect(() => { const refresh = () => { if (!current.current.dirty && document.visibilityState === 'visible') void load(); }; const timer = window.setInterval(refresh, 60_000); window.addEventListener('focus', refresh); return () => { window.clearInterval(timer); window.removeEventListener('focus', refresh); }; }, [load]);
   function chooseReview(id: string, tab: Tab = 'main') { if (!dirty || confirm('Discard your unsaved feedback and return to the review queue?')) { setDirty(false); setActiveReview(id); setStaffTab(tab); } }
   function move(next: number) { if (!dirty || confirm('You have unsaved text. Leave this page and discard those changes?')) { setDirty(false); setModule(next); if (next !== module) history.pushState(null, '', urlFor(next)); } }
   function switchView() {
@@ -151,6 +152,8 @@ export default function Workspace() {
   if (data.me.role === 'participant' && !data.me.password_set_at) return <div className="first-password"><PasswordPrompt refresh={load} onAuth={() => setReauth(true)} done={() => { setModule(0); history.replaceState(null, '', urlFor(0)); }}/>{reauth && <ReauthDialog local={local} onSuccess={load}/>}</div>;
   const staff = data.me.role !== 'participant' && !preview;
   const auth = () => setReauth(true);
+  const feedbackNeeded = !preview && data.me.role === 'participant' && data.feedbackRequests?.some(r => r.module === module && r.required);
+  const pendingFeedback = !preview && data.me.role === 'participant' ? data.feedbackRequests?.filter(r => r.required) || [] : [];
   const inModule = data.assignments.filter(a => a.module === module);
   // Подсказка берёт первое задание модуля, где участнику есть что делать; иначе — первое задание.
   const states = inModule.map(a => { const work = data.works.find(w => w.assignment_id === a.id && w.owner_id === data.me.id); const draft = data.drafts.find(d => d.work_id === work?.id); return { a, work, draft, open: !work || work.status === 'draft' || work.status === 'needs_revision' || !!draft }; });
@@ -184,7 +187,9 @@ export default function Workspace() {
     </aside><main id="main" className="main"><header className="topbar"><span>{staff ? 'Team workspace' : 'Learning workspace'}</span><div className="topbar-actions">{!staff && !preview && <button className="secondary small-button" onClick={() => setFeedback(true)}>Feedback</button>}{!preview && <Notifications data={data} refresh={load} onAuth={auth}/>}</div><span className="session-note">{upcoming ? <>{sessionState(upcoming, now) === 'started' ? 'Live session started' : 'Next live session'} <strong>{date(upcoming.starts_at)}</strong></> : 'No upcoming live sessions'}</span></header>
       {preview && <aside className="student-preview-banner" role="status"><strong>Student preview</strong><span>Explore the published course and watch videos. Homework, messages and study progress are read-only.</span></aside>}
       <ErrorBox error={error}/>{error && <button className="secondary" onClick={load}>Retry loading</button>}
+      {pendingFeedback.length > 0 && !feedbackNeeded && <aside className="lesson-summary" role="status"><div><strong>A quick session check-in</strong><p>Please share a short comment before continuing in Module {pendingFeedback[0].module}.</p></div><button onClick={() => move(pendingFeedback[0].module)}>Give feedback</button></aside>}
       {staff ? activeReview ? <Expert data={data} refresh={load} active={activeReview} setActive={id => chooseReview(id, staffTab)} onAuth={auth} onDirty={setDirty} filter={queueFilter} setFilter={setQueueFilter} now={now}/> : staffTab === 'journal' ? <Journal data={data} now={now} filter={journalFilter} setFilter={setJournalFilter} open={id => chooseReview(id, 'journal')}/> : staffTab === 'presentations' ? <Presentations data={data} refresh={load} onAuth={auth}/> : staffTab === 'email' ? <MailAdmin data={data} refresh={load} onAuth={auth}/> : staffTab === 'feedback' ? <FeedbackAdmin data={data}/> : staffTab === 'activity' ? <ActivityDashboard data={data} now={now} open={id => chooseReview(id, 'activity')}/> : staffTab === 'questions' ? <TeamQuestions data={data} refresh={load} onAuth={auth}/> : staffTab === 'content' ? data.me.role === 'admin' ? <ContentAdmin data={data} refresh={load} onAuth={auth} onDirty={setDirty}/> : <TeamMaterials data={data}/> : data.me.role === 'admin' ? <Admin data={data} refresh={load} local={local}/> : <Expert data={data} refresh={load} active={activeReview} setActive={id => chooseReview(id, staffTab)} onAuth={auth} onDirty={setDirty} filter={queueFilter} setFilter={setQueueFilter} now={now}/>
+      : feedbackNeeded ? <section className="admin-card" aria-labelledby="module-feedback-title"><p className="eyebrow">MODULE {module} · SESSION CHECK-IN</p><h1 id="module-feedback-title">How was the session?</h1><p>A sentence or two is enough. Share what helped or what could be clearer. After sending, you can continue with this module.</p><FeedbackForm key={`required-${module}`} data={data} module={module} refresh={load} onAuth={auth} requiredModule/></section>
       : module === PROJECT ? <fieldset className="preview-fields" disabled={preview}><ProjectView data={data} refresh={load} onAuth={auth} open={move}/></fieldset> : <>
         <div className="page-heading"><p className="eyebrow">MODULE {String(module).padStart(2,'0')}</p><h1>{modules[module]}</h1><p className="muted">{module === 0 ? 'Get ready for the first shared session.' : 'Build your concept one considered decision at a time.'}</p></div>
         <div className="lesson-summary"><span className="lesson-icon" aria-hidden="true">↗</span><div><strong>{module === 0 ? 'Before we meet' : 'Your next step'}</strong><p>{module === 0 ? (data.materials.some(m => m.module === 0 && m.audience === 'participant' && m.open) ? 'Start with the welcome video below. Then note the theme and audience of the slot you want to build — you can change them later.' : 'Check your course access and the session schedule. Note the theme and audience of the slot you want to build — you can change them later. Welcome materials will appear here when published.') : summary}</p></div><span className="small muted">One shared cohort</span></div>
@@ -629,8 +634,9 @@ function TimeZone({ data, refresh, onAuth }: { data: Data; refresh: () => Promis
 const mailStatuses: Record<string, string> = { pending: 'Queued', sending: 'Sending', sent: 'Accepted by provider', failed: 'Failed', unknown: 'Unknown result', cancelled: 'Cancelled', missed: 'Missed' };
 function MailAdmin({ data, refresh, onAuth }: { data: Data; refresh: () => Promise<void>; onAuth: () => void }) {
   const [status,setStatus] = useState(''); const [run,setRun] = useState(''); const save = useSave(refresh, onAuth);
-  const rows = data.notifications.filter(n => !status || n.status === status);
-  const counts = Object.keys(mailStatuses).map(k => [k, data.notifications.filter(n => n.status === k).length] as const).filter(([, c]) => c);
+  const email = data.notifications.filter(n => n.channel !== 'in_app');
+  const rows = email.filter(n => !status || n.status === status);
+  const counts = Object.keys(mailStatuses).map(k => [k, email.filter(n => n.status === k).length] as const).filter(([, c]) => c);
   const person = (id: string) => data.people.find(p => p.id === id);
   return <><div className="page-heading"><p className="eyebrow">ADMINISTRATION</p><h1>Email</h1><p className="muted">Course emails and reminders. “Accepted by provider” does not mean the email reached the inbox.</p></div>
     <section className="admin-card"><p><strong>Provider:</strong> {data.mail?.provider === 'local' ? 'Local test mailbox — emails are written to files on this computer, nothing is sent.' : data.mail?.provider ? data.mail.provider : 'Not configured — emails stay queued until a provider is set up.'}</p>
@@ -696,16 +702,16 @@ function AccountPanel({ data, refresh, onAuth }: { data: Data; refresh: () => Pr
 }
 
 // Отзыв о курсе в любой момент: видят автор и администраторы.
-function FeedbackForm({ data, module, refresh, onAuth }: { data: Data; module: number | null; refresh: () => Promise<void>; onAuth: () => void }) {
+function FeedbackForm({ data, module, refresh, onAuth, requiredModule = false }: { data: Data; module: number | null; refresh: () => Promise<void>; onAuth: () => void; requiredModule?: boolean }) {
   const [about,setAbout] = useState<string>(module === null ? '' : String(module)); const [rating,setRating] = useState(''); const [body,setBody] = useState(''); const [sent,setSent] = useState(false); const key = useRef(''); const save = useSave(refresh, onAuth);
   const mine = data.feedback.filter(f => f.owner_id === data.me.id);
   if (sent) return <div><p role="status"><strong>Thank you.</strong> The course team will read your feedback.</p><button className="secondary" onClick={() => { setSent(false); setBody(''); setRating(''); }}>Write more</button></div>;
   return <form onSubmit={async e => { e.preventDefault(); key.current ||= crypto.randomUUID(); if (await save.run('feedback.send', { module: about === '' ? null : Number(about), rating: rating ? Number(rating) : null, body, key: key.current }, 'Sent')) { key.current = ''; setSent(true); } }}>
     <p className="muted small">Tell us what works and what does not, at any time. The course team sees your name; other participants do not see your feedback.</p>
-    <label htmlFor="feedback-about">About</label><select id="feedback-about" value={about} onChange={e => { setAbout(e.target.value); key.current = ''; }}><option value="">The course in general</option>{modules.map((name, index) => <option key={name} value={index}>Module {index} · {name}</option>)}</select>
+    <label htmlFor="feedback-about">About</label><select id="feedback-about" disabled={requiredModule} value={about} onChange={e => { setAbout(e.target.value); key.current = ''; }}><option value="">The course in general</option>{modules.map((name, index) => <option key={name} value={index}>Module {index} · {name}</option>)}</select>
     <fieldset><legend>How is it going? (optional)</legend><div className="rating">{[1,2,3,4,5].map(n => <label className="choice" key={n}><input type="radio" name="feedback-rating" checked={rating === String(n)} onChange={() => { setRating(String(n)); key.current = ''; }}/>{n}</label>)}<button type="button" className="text-button" style={{ visibility: rating ? 'visible' : 'hidden' }} onClick={() => setRating('')}>Clear</button></div><p className="muted small">1 — not good, 5 — very good.</p></fieldset>
     <label htmlFor="feedback-body">Your feedback</label><textarea id="feedback-body" value={body} onChange={e => { setBody(e.target.value); key.current = ''; }} rows={5} required/>
-    <button disabled={save.busy}>{save.busy ? 'Sending…' : 'Send feedback'}</button><ErrorBox error={save.error}/>
+    <button disabled={save.busy}>{save.busy ? 'Sending…' : requiredModule ? 'Send feedback and continue' : 'Send feedback'}</button><ErrorBox error={save.error}/>
     {mine.length > 0 && <p className="muted small">You have sent feedback {mine.length} {mine.length === 1 ? 'time' : 'times'}, last on {date(mine[0].created_at)}.</p>}
   </form>;
 }
