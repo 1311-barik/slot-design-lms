@@ -63,6 +63,10 @@ export async function downloadFile(actor: string, id: string) {
   return transaction(actor, async tx => {
     const [file] = await tx`select * from lms.files where id=${id}`;
     if (!file) throw new AppError('not_found', 'This file is not available.', 404);
+    if (file.mime === 'video/mp4') {
+      const [access] = await tx`select lms.is_admin() as allowed`;
+      if (!access.allowed) throw new AppError('video_download_disabled', 'Course videos are available for streaming only.', 403);
+    }
     if (config().mode === 'local') return { file, bytes: await readFile(join(config().runtime, 'files', id)) };
     const { data, error } = await storage().download(id);
     if (error || !data) throw new AppError('download_failed', 'The file is temporarily unavailable. Try again.', 503);
