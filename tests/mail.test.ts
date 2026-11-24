@@ -154,19 +154,12 @@ test('session reminders 24 h and 1 h before; late runs are missed; a move cancel
   assert.ok(saved.id);
 });
 
-test('deadline reminder only without any submitted version; a submission before sending cancels it', async () => {
+test('publishing homework does not create the retired 24-hour email reminder', async () => {
   const due = new Date('2027-01-20T14:00:00Z');
   await command(admin, 'assignment.schedule', { assignmentId: seeded(6), published: true, opensAt: null, dueAt: due.toISOString(), reviewDueAt: null, latePolicy: 'allow_mark' });
   const now = new Date(due.getTime() - 24 * 3_600_000 + 60_000);
   await plan(now);
-  const draft = await command(learner, 'draft.create', { assignmentId: seeded(6) });
-  const saved = await command(learner, 'draft.save', { draftId: draft.id, expectedRevision: draft.revision, payload: { parts: { versions: text('v'), accepted: text('a'), rejected: text('r'), borrowed: text('b') } } });
-  await command(learner, 'draft.submit', { draftId: draft.id, expectedRevision: saved.revision, key: randomUUID() });
-  const mail = fake();
-  await drain(now, mail.provider);
-  const reminders = mail.sent.filter(m => m.subject === 'Due in 24 hours: 6.2 · Revised concept after the crash test');
-  assert.deepEqual(reminders.map(m => m.to), ['sam@example.test']);
-  assert.equal((await byKey(`deadline.reminder:${seeded(6)}:%:${learner}`))[0].status, 'cancelled');
+  assert.equal((await byKey(`deadline.reminder:${seeded(6)}:%`)).length, 0);
 });
 
 test('provider failures: retry known errors, never blindly retry an unknown result, cancel for revoked access', async () => {
