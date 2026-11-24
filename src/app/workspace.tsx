@@ -4,17 +4,19 @@ import { isPackage, validateSubmission, type AssignmentSpec, type Payload } from
 import { modules } from '@/lib/course';
 import { earlyCommencement } from '@/lib/early-commencement';
 import { accessEndFromDate } from '@/lib/access-date';
-import { courseViewUrl, studentPreviewData, studentViewRequested } from '@/lib/student-preview';
+import { courseViewUrl, studentPreviewUrl, studentViewRequested } from '@/lib/student-preview';
 
 type Row = { id: string; [key: string]: any };
-type Data = { consentRequired?: boolean; me: Row; assignments: Row[]; works: Row[]; drafts: Row[]; submissions: Row[]; reviews: Row[]; reviewDrafts: Row[]; files: Row[]; people: Row[]; project: Row | null; packageItems: Row[]; questions: Row[]; answers: Row[]; materials: Row[]; materialFiles: Row[]; progress: Row[]; sessions: Row[]; now: string; presentations: Row[]; reviewers: Row[]; notifications: Row[]; feedback: Row[]; earlyCommencementConsents: Row[]; projects: Row[]; mail: { provider: string | null } | null };
+type Data = { preview?: { administratorId: string; participantId: string; participants: { id: string; name: string }[] }; feedbackRequests?: { module: number; required: boolean }[]; consentRequired?: boolean; me: Row; assignments: Row[]; works: Row[]; drafts: Row[]; submissions: Row[]; reviews: Row[]; reviewDrafts: Row[]; files: Row[]; people: Row[]; project: Row | null; packageItems: Row[]; questions: Row[]; answers: Row[]; materials: Row[]; materialFiles: Row[]; progress: Row[]; sessions: Row[]; now: string; presentations: Row[]; reviewers: Row[]; notifications: Row[]; feedback: Row[]; earlyCommencementConsents: Row[]; projects: Row[]; mail: { provider: string | null } | null };
 type Tab = 'main' | 'questions' | 'content' | 'journal' | 'presentations' | 'email' | 'feedback' | 'activity';
 type QueueFilter = { assignment: string; status: string; overdue: boolean };
 type JournalFilter = { module: string; assignment: string; status: string; reviewer: string; late: boolean };
+const currentSearch = () => typeof location === 'undefined' ? '' : location.search;
+const apiUrl = (path: string) => studentPreviewUrl(`/api/v1/${path}`, currentSearch(), true);
 class RequestError extends Error { constructor(message: string, public code: string, public fields: string[] = []) { super(message); } }
 async function api(path: string, body?: unknown) {
   let result: Response;
-  try { result = await fetch(`/api/v1/${path}`, { method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin', headers: body instanceof FormData ? undefined : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body) }); }
+  try { result = await fetch(apiUrl(path), { method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin', headers: body instanceof FormData ? undefined : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body) }); }
   catch { throw new RequestError('Connection lost. Your text is still here. Reconnect and try again.', 'network'); }
   const data = await result.json();
   if (!result.ok) throw new RequestError(data.message || 'Something went wrong. Try again.', data.code, data.field_errors);
@@ -50,7 +52,7 @@ function ErrorBox({ error }: { error: string }) { return error ? <div className=
 const moduleFromUrl = () => { const raw = new URLSearchParams(location.search).get('module'); if (raw === 'project') return PROJECT; const value = Number(raw); return raw !== null && raw !== '' && Number.isInteger(value) && value >= 0 && value < modules.length ? value : 1; };
 // Первый вход без модуля в адресе: до первого занятия — модуль 0 (стартовое видео), потом — модуль последнего начавшегося занятия.
 const startModule = (sessions: Row[], now: number) => { const started = sessions.filter(x => x.module >= 1 && new Date(x.starts_at).getTime() <= now).map(x => x.module); return started.length ? Math.max(...started) : 0; };
-const urlFor = (module: number, student = studentViewRequested(location.search)) => courseViewUrl(module === PROJECT ? 'project' : module, student);
+const urlFor = (module: number, student = studentViewRequested(location.search)) => courseViewUrl(module === PROJECT ? 'project' : module, student, new URLSearchParams(currentSearch()).get('student'));
 // Подсказка сверху повторяет состояние работы ниже, а не общий призыв к отправке.
 function nextStep(assignment: Row | undefined, work: Row | undefined, draft: Row | undefined) {
   if (!assignment) return 'Materials and assignments will appear here when published.';
@@ -125,47 +127,91 @@ export default function Workspace() {
   const [studentView, setStudentView] = useState(false);
   const [queueFilter, setQueueFilter] = useState<QueueFilter>({ assignment: '', status: 'waiting', overdue: false }); const [journalFilter, setJournalFilter] = useState<JournalFilter>({ module: '', assignment: '', status: '', reviewer: '', late: false });
   const startApplied = useRef(false);
-  const load = useCallback(async () => { try { const next = await api('workspace'); if (!startApplied.current && !next.consentRequired) { startApplied.current = true; if (next.me.role === 'participant' && !next.me.password_set_at) { setModule(0); history.replaceState(null, '', urlFor(0)); } else if (next.me.role === 'participant' && !new URLSearchParams(location.search).get('module')) setModule(startModule(next.sessions, new Date(next.now).getTime())); if (next.me.role === 'admin') setStaffTab('activity'); } setData(old => { if (old && old.me.id !== next.me.id) { location.reload(); return old; } return next; }); setReauth(false); setError(''); } catch (e) { if ((e as RequestError).code === 'unauthenticated') { setReauth(true); } else setError((e as Error).message); } finally { setLoading(false); } }, []);
-  const current = useRef({ module, dirty, studentView }); current.current = { module, dirty, studentView };
+  const loadVersion = useRef(0);
+  const loadedSearch = useRef<string | null>(null);
+  const load = useCallback(async () => {
+    const version = ++loadVersion.current;
+    try {
+      const next = await api('workspace');
+      if (version !== loadVersion.current) return;
+      if (!startApplied.current && !next.consentRequired) {
+        startApplied.current = true;
+        if (next.me.role === 'participant' && !next.me.password_set_at) {
+          setModule(0); history.replaceState(null, '', urlFor(0));
+        } else if (next.me.role === 'participant' && !new URLSearchParams(location.search).get('module')) {
+          setModule(startModule(next.sessions, new Date(next.now).getTime()));
+        }
+        if (next.me.role === 'admin') setStaffTab('activity');
+      }
+      if (next.preview && new URLSearchParams(location.search).get('student') !== next.preview.participantId) {
+        const url = new URL(location.href);
+        url.searchParams.set('student', next.preview.participantId);
+        history.replaceState(null, '', url.pathname + url.search);
+      }
+      loadedSearch.current = location.search;
+      setData(old => {
+        if (old && !old.preview && !next.preview && old.me.id !== next.me.id) { location.reload(); return old; }
+        return next;
+      });
+      setReauth(false); setError('');
+    } catch (e) {
+      if (version !== loadVersion.current) return;
+      // При ошибке смены участника ссылки продолжают относиться к показанным данным.
+      if (loadedSearch.current !== null) {
+        history.replaceState(null, '', location.pathname + loadedSearch.current);
+        setStudentView(studentViewRequested(loadedSearch.current));
+        setModule(moduleFromUrl());
+      }
+      if ((e as RequestError).code === 'unauthenticated') setReauth(true);
+      else setError((e as Error).message);
+    } finally {
+      if (version === loadVersion.current) setLoading(false);
+    }
+  }, []);
+  const current = useRef({ module, dirty, studentView, participant: workspace?.preview?.participantId }); current.current = { module, dirty, studentView, participant: workspace?.preview?.participantId };
   useEffect(() => { api('config').then(r => setLocal(r.local)).catch(e => setError(e.message)); setModule(moduleFromUrl()); setStudentView(studentViewRequested(location.search)); void load(); }, [load]);
   useEffect(() => { const listener = (e: BeforeUnloadEvent) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } }; window.addEventListener('beforeunload', listener); return () => window.removeEventListener('beforeunload', listener); }, [dirty]);
   useEffect(() => {
     // Back/Forward меняют модуль так же, как меню: несохранённый текст требует подтверждения.
-    const listener = () => { const next = moduleFromUrl(); const nextStudent = studentViewRequested(location.search); if (next === current.current.module && nextStudent === current.current.studentView) return; if (current.current.dirty && !confirm('You have unsaved text. Leave this page and discard those changes?')) { history.pushState(null, '', urlFor(current.current.module, current.current.studentView)); return; } setDirty(false); setModule(next); setStudentView(nextStudent); };
+    const listener = () => { const next = moduleFromUrl(); const nextStudent = studentViewRequested(location.search); const nextParticipant = new URLSearchParams(location.search).get('student') || undefined; if (next === current.current.module && nextStudent === current.current.studentView && nextParticipant === current.current.participant) return; if (current.current.dirty && !confirm('You have unsaved text. Leave this page and discard those changes?')) { history.pushState(null, '', urlFor(current.current.module, current.current.studentView)); return; } setDirty(false); setModule(next); setStudentView(nextStudent); setLoading(true); void load(); };
     window.addEventListener('popstate', listener); return () => window.removeEventListener('popstate', listener);
-  }, []);
+  }, [load]);
+  useEffect(() => { const refresh = () => { if (!current.current.dirty && document.visibilityState === 'visible') void load(); }; const timer = window.setInterval(refresh, 60_000); window.addEventListener('focus', refresh); return () => { window.clearInterval(timer); window.removeEventListener('focus', refresh); }; }, [load]);
   function chooseReview(id: string, tab: Tab = 'main') { if (!dirty || confirm('Discard your unsaved feedback and return to the review queue?')) { setDirty(false); setActiveReview(id); setStaffTab(tab); } }
   function move(next: number) { if (!dirty || confirm('You have unsaved text. Leave this page and discard those changes?')) { setDirty(false); setModule(next); if (next !== module) history.pushState(null, '', urlFor(next)); } }
   function switchView() {
-    if (workspace?.me.role !== 'admin' || (dirty && !confirm('You have unsaved text. Switch views and discard those changes?'))) return;
-    const nextStudent = !studentView;
+    if ((!workspace?.preview && workspace?.me.role !== 'admin') || (dirty && !confirm('You have unsaved text. Switch views and discard those changes?'))) return;
+    const nextStudent = !workspace.preview;
     const nextModule = nextStudent && !new URLSearchParams(location.search).has('module') ? startModule(workspace.sessions, new Date(workspace.now).getTime()) : module;
     setDirty(false); setActiveReview(''); setAccount(false); setFeedback(false); setModule(nextModule); setStudentView(nextStudent);
-    history.pushState(null, '', urlFor(nextModule, nextStudent));
+    history.pushState(null, '', urlFor(nextModule, nextStudent)); startApplied.current = false; setLoading(true); void load();
   }
-  const preview = workspace?.me.role === 'admin' && studentView;
-  const data = preview && workspace ? studentPreviewData(workspace) : workspace;
+  const preview = !!workspace?.preview;
+  const data = workspace;
+  async function chooseStudent(id: string) { if (dirty && !confirm('Discard unsaved text and change the preview?')) return; const url = new URL(location.href); url.searchParams.set('student', id); history.pushState(null, '', url.pathname + url.search); setAccount(false); setFeedback(false); setDirty(false); setLoading(true); await load(); }
   if (loading) return <div className="loading" role="status">Opening your workspace…</div>;
-  if (!data) return <>{error && <div className="startup-error"><ErrorBox error={error}/><button onClick={load}>Try again</button></div>}<SignIn local={local} onSuccess={load}/></>;
-  if (data.me.role === 'participant' && data.consentRequired) return <div className="first-password consent-gate"><p className="small">Signed in as <strong>{data.me.name}</strong></p><AccountConsent refresh={load} onAuth={() => setReauth(true)}/><button className="text-button" onClick={async () => { await api('auth/logout', {}); location.reload(); }}>Sign out</button>{reauth && <ReauthDialog local={local} onSuccess={load}/>}</div>;
-  if (data.me.role === 'participant' && !data.me.password_set_at) return <div className="first-password"><PasswordPrompt refresh={load} onAuth={() => setReauth(true)} done={() => { setModule(0); history.replaceState(null, '', urlFor(0)); }}/>{reauth && <ReauthDialog local={local} onSuccess={load}/>}</div>;
+  if (!data) return <>{error && <div className="startup-error"><ErrorBox error={error}/><button onClick={load}>Try again</button>{studentViewRequested(currentSearch()) && <button className="secondary" onClick={() => { const url = new URL(location.href); url.searchParams.delete('view'); url.searchParams.delete('student'); location.assign(url.pathname + url.search); }}>Back to my workspace</button>}</div>}<SignIn local={local} onSuccess={load}/></>;
+  if (!preview && data.me.role === 'participant' && data.consentRequired) return <div className="first-password consent-gate"><p className="small">Signed in as <strong>{data.me.name}</strong></p><AccountConsent refresh={load} onAuth={() => setReauth(true)}/><button className="text-button" onClick={async () => { await api('auth/logout', {}); location.reload(); }}>Sign out</button>{reauth && <ReauthDialog local={local} onSuccess={load}/>}</div>;
+  if (!preview && data.me.role === 'participant' && !data.me.password_set_at) return <div className="first-password"><PasswordPrompt refresh={load} onAuth={() => setReauth(true)} done={() => { setModule(0); history.replaceState(null, '', urlFor(0)); }}/>{reauth && <ReauthDialog local={local} onSuccess={load}/>}</div>;
   const staff = data.me.role !== 'participant' && !preview;
   const auth = () => setReauth(true);
-  const inModule = data.assignments.filter(a => a.module === module);
+  const feedbackNeeded = data.me.role === 'participant' && data.feedbackRequests?.some(r => r.module === module && r.required);
+  const pendingFeedback = data.me.role === 'participant' ? data.feedbackRequests?.filter(r => r.required) || [] : [];
+  const inModule = (data.assignments || []).filter(a => a.module === module);
   // Подсказка берёт первое задание модуля, где участнику есть что делать; иначе — первое задание.
   const states = inModule.map(a => { const work = data.works.find(w => w.assignment_id === a.id && w.owner_id === data.me.id); const draft = data.drafts.find(d => d.work_id === work?.id); return { a, work, draft, open: !work || work.status === 'draft' || work.status === 'needs_revision' || !!draft }; });
   const focus = states.find(x => x.open && x.a.published) || states[0];
   const summary = focus ? `${states.length > 1 ? `${focus.a.spec.title}: ` : ''}${nextStep(focus.a, focus.work, focus.draft)}` : nextStep(undefined, undefined, undefined);
-  const now = new Date(data.now).getTime();
-  const upcoming = data.sessions.find(x => sessionState(x, now) !== 'finished');
+  const now = new Date(data.now || Date.now()).getTime();
+  const upcoming = data.sessions?.find(x => sessionState(x, now) !== 'finished');
   const staffMain = data.me.role === 'admin' ? 'Course administration' : 'Review queue';
-  const openQuestions = data.questions.filter(q => !data.answers.some(a => a.question_id === q.id)).length;
+  const openQuestions = (data.questions || []).filter(q => !data.answers.some(a => a.question_id === q.id)).length;
   return <>
     {local && <div className="dev-banner">LOCAL DEVELOPMENT · Synthetic accounts and test deadlines</div>}
     <a className="skip" href="#main">Skip to content</a>
-    <div className="app-shell"><aside className="sidebar"><a href="/" className="brand"><img className="brand-logo" src="/brand/talentgrator.png" alt="Talentgrator" width={72} height={44}/><span>Slot design<br/><em>From idea to release</em></span></a>
+    <div className="app-shell" key={data.me.id}><aside className="sidebar"><a href={studentPreviewUrl("/", currentSearch())} className="brand"><img className="brand-logo" src="/brand/talentgrator.png" alt="Talentgrator" width={72} height={44}/><span>Slot design<br/><em>From idea to release</em></span></a>
       <div className="cohort"><span className="dot"/> November 2026 cohort</div>
-      {workspace?.me.role === 'admin' && <button type="button" className="secondary full view-switch" aria-pressed={preview} onClick={switchView}>{preview ? 'Back to administrator' : 'View as student'}</button>}
+      {(workspace?.me.role === 'admin' || preview) && <button type="button" className="secondary full view-switch" aria-pressed={preview} onClick={switchView}>{preview ? 'Back to administrator' : 'View as student'}</button>}
       <p className="nav-label">{staff ? 'WORKSPACE' : 'YOUR COURSE'}</p>
       <nav aria-label="Course navigation">{staff ? <>
         {data.me.role === 'admin' && <button className={`nav-item ${staffTab === 'activity' ? 'selected' : ''}`} aria-current={staffTab === 'activity' ? 'page' : undefined} onClick={() => chooseReview('', 'activity')}>Activity</button>}
@@ -180,11 +226,13 @@ export default function Workspace() {
         <button onClick={() => move(PROJECT)} className={`nav-item ${module === PROJECT ? 'selected' : ''}`} aria-current={module === PROJECT ? 'page' : undefined}><span className="nav-number">★</span><span>My project</span></button>
         {modules.map((name, index) => <button key={name} onClick={() => move(index)} className={`nav-item ${module === index ? 'selected' : ''}`} aria-current={module === index ? 'page' : undefined}><span className="nav-number">{String(index).padStart(2,'0')}</span><span>{name}</span></button>)}
       </>}</nav>
-      <div className="sidebar-bottom"><span className="avatar">{data.me.name.slice(0,1)}</span><div><strong>{data.me.name}</strong><small>{data.me.role === 'reviewer' ? 'Expert' : data.me.role}</small></div><button className="text-button" onClick={() => setAccount(true)}>Account</button><button className="text-button" onClick={async () => { if (dirty && !confirm('Discard unsaved changes and sign out?')) return; await api('auth/logout', {}); location.reload(); }}>Sign out</button></div>
-    </aside><main id="main" className="main"><header className="topbar"><span>{staff ? 'Team workspace' : 'Learning workspace'}</span><div className="topbar-actions">{!staff && !preview && <button className="secondary small-button" onClick={() => setFeedback(true)}>Feedback</button>}{!preview && <Notifications data={data} refresh={load} onAuth={auth}/>}</div><span className="session-note">{upcoming ? <>{sessionState(upcoming, now) === 'started' ? 'Live session started' : 'Next live session'} <strong>{date(upcoming.starts_at)}</strong></> : 'No upcoming live sessions'}</span></header>
-      {preview && <aside className="student-preview-banner" role="status"><strong>Student preview</strong><span>Explore the published course and watch videos. Homework, messages and study progress are read-only.</span></aside>}
+      <div className="sidebar-bottom"><span className="avatar">{data.me.name.slice(0,1)}</span><div><strong>{data.me.name}</strong><small>{data.me.role === 'reviewer' ? 'Expert' : data.me.role}</small></div><button className="text-button" onClick={() => setAccount(true)}>Account</button><button className="text-button" onClick={async () => { if (preview) { switchView(); return; } if (dirty && !confirm('Discard unsaved changes and sign out?')) return; await api('auth/logout', {}); location.reload(); }}>Sign out</button></div>
+    </aside><main id="main" className="main"><header className="topbar"><span>{staff ? 'Team workspace' : 'Learning workspace'}</span><div className="topbar-actions">{!staff && <button className="secondary small-button" onClick={() => setFeedback(true)}>Feedback</button>}<Notifications data={data} refresh={load} onAuth={auth} readOnly={preview}/></div><span className="session-note">{upcoming ? <>{sessionState(upcoming, now) === 'started' ? 'Live session started' : 'Next live session'} <strong>{date(upcoming.starts_at)}</strong></> : 'No upcoming live sessions'}</span></header>
+      {preview && <aside className="student-preview-banner" role="status"><strong>Student preview · {data.me.name}</strong><label>Participant<select aria-label="Preview participant" value={data.me.id} onChange={e => void chooseStudent(e.target.value)}>{data.preview?.participants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><span>This is the participant’s current workspace, including notifications and access restrictions. Changes and read receipts are not saved.</span></aside>}
       <ErrorBox error={error}/>{error && <button className="secondary" onClick={load}>Retry loading</button>}
-      {staff ? activeReview ? <Expert data={data} refresh={load} active={activeReview} setActive={id => chooseReview(id, staffTab)} onAuth={auth} onDirty={setDirty} filter={queueFilter} setFilter={setQueueFilter} now={now}/> : staffTab === 'journal' ? <Journal data={data} now={now} filter={journalFilter} setFilter={setJournalFilter} open={id => chooseReview(id, 'journal')}/> : staffTab === 'presentations' ? <Presentations data={data} refresh={load} onAuth={auth}/> : staffTab === 'email' ? <MailAdmin data={data} refresh={load} onAuth={auth}/> : staffTab === 'feedback' ? <FeedbackAdmin data={data}/> : staffTab === 'activity' ? <ActivityDashboard data={data} now={now} open={id => chooseReview(id, 'activity')}/> : staffTab === 'questions' ? <TeamQuestions data={data} refresh={load} onAuth={auth}/> : staffTab === 'content' ? data.me.role === 'admin' ? <ContentAdmin data={data} refresh={load} onAuth={auth} onDirty={setDirty}/> : <TeamMaterials data={data}/> : data.me.role === 'admin' ? <Admin data={data} refresh={load} local={local}/> : <Expert data={data} refresh={load} active={activeReview} setActive={id => chooseReview(id, staffTab)} onAuth={auth} onDirty={setDirty} filter={queueFilter} setFilter={setQueueFilter} now={now}/>
+      {pendingFeedback.length > 0 && !feedbackNeeded && <aside className="lesson-summary" role="status"><div><strong>A quick session check-in</strong><p>Please share a short comment before continuing in Module {pendingFeedback[0].module}.</p></div><button onClick={() => move(pendingFeedback[0].module)}>Give feedback</button></aside>}
+      {preview && (data.consentRequired || !data.me.password_set_at) ? <fieldset className="preview-fields" disabled>{data.consentRequired ? <AccountConsent refresh={load} onAuth={auth}/> : <PasswordPrompt refresh={load} onAuth={auth} done={() => {}}/>}</fieldset> : staff ? activeReview ? <Expert data={data} refresh={load} active={activeReview} setActive={id => chooseReview(id, staffTab)} onAuth={auth} onDirty={setDirty} filter={queueFilter} setFilter={setQueueFilter} now={now}/> : staffTab === 'journal' ? <Journal data={data} now={now} filter={journalFilter} setFilter={setJournalFilter} open={id => chooseReview(id, 'journal')}/> : staffTab === 'presentations' ? <Presentations data={data} refresh={load} onAuth={auth}/> : staffTab === 'email' ? <MailAdmin data={data} refresh={load} onAuth={auth}/> : staffTab === 'feedback' ? <FeedbackAdmin data={data}/> : staffTab === 'activity' ? <ActivityDashboard data={data} now={now} open={id => chooseReview(id, 'activity')}/> : staffTab === 'questions' ? <TeamQuestions data={data} refresh={load} onAuth={auth}/> : staffTab === 'content' ? data.me.role === 'admin' ? <ContentAdmin data={data} refresh={load} onAuth={auth} onDirty={setDirty}/> : <TeamMaterials data={data}/> : data.me.role === 'admin' ? <Admin data={data} refresh={load} local={local}/> : <Expert data={data} refresh={load} active={activeReview} setActive={id => chooseReview(id, staffTab)} onAuth={auth} onDirty={setDirty} filter={queueFilter} setFilter={setQueueFilter} now={now}/>
+      : feedbackNeeded ? <section className="admin-card" aria-labelledby="module-feedback-title"><p className="eyebrow">MODULE {module} · SESSION CHECK-IN</p><h1 id="module-feedback-title">How was the session?</h1><p>A sentence or two is enough. Share what helped or what could be clearer. After sending, you can continue with this module.</p><fieldset className="preview-fields" disabled={preview}><FeedbackForm key={`${data.me.id}-required-${module}`} data={data} module={module} refresh={load} onAuth={auth} requiredModule/></fieldset></section>
       : module === PROJECT ? <fieldset className="preview-fields" disabled={preview}><ProjectView data={data} refresh={load} onAuth={auth} open={move}/></fieldset> : <>
         <div className="page-heading"><p className="eyebrow">MODULE {String(module).padStart(2,'0')}</p><h1>{modules[module]}</h1><p className="muted">{module === 0 ? 'Get ready for the first shared session.' : 'Build your concept one considered decision at a time.'}</p></div>
         <div className="lesson-summary"><span className="lesson-icon" aria-hidden="true">↗</span><div><strong>{module === 0 ? 'Before we meet' : 'Your next step'}</strong><p>{module === 0 ? (data.materials.some(m => m.module === 0 && m.audience === 'participant' && m.open) ? 'Start with the welcome video below. Then note the theme and audience of the slot you want to build — you can change them later.' : 'Check your course access and the session schedule. Note the theme and audience of the slot you want to build — you can change them later. Welcome materials will appear here when published.') : summary}</p></div><span className="small muted">One shared cohort</span></div>
@@ -197,8 +245,8 @@ export default function Workspace() {
       </>}
       <footer className="footer">Slot Design · From idea to release<span>Course times: CET · Europe/Berlin</span></footer>
     </main></div>{reauth && <ReauthDialog local={local} onSuccess={load}/>}
-    {account && <Modal label="Account" close={() => setAccount(false)}><AccountPanel data={data} refresh={load} onAuth={auth}/></Modal>}
-    {feedback && <Modal label="Course feedback" close={() => setFeedback(false)}><FeedbackForm data={data} module={module === PROJECT ? null : module} refresh={load} onAuth={auth}/></Modal>}</>;
+    {account && <Modal label="Account" close={() => setAccount(false)}><fieldset className="preview-fields" disabled={preview}><AccountPanel data={data} refresh={load} onAuth={auth}/></fieldset></Modal>}
+    {feedback && <Modal label="Course feedback" close={() => setFeedback(false)}><fieldset className="preview-fields" disabled={preview}><FeedbackForm data={data} module={module === PROJECT ? null : module} refresh={load} onAuth={auth}/></fieldset></Modal>}</>;
 }
 
 function Assignment({ assignment, data, refresh, onAuth, onDirty }: { assignment: Row; data: Data; refresh: () => Promise<void>; onAuth: () => void; onDirty: (v: boolean) => void }) {
@@ -257,7 +305,7 @@ function Editor({ canSubmit, draft, spec, data, refresh, onAuth, onDirty }: { ca
       {part.kind === 'choice' ? <div id={pid} tabIndex={-1} role="radiogroup" aria-labelledby={`title-${pid}`} aria-describedby={`hint-${pid}`} className="choices">{part.options!.map(option => <label className="choice" key={option}><input type="radio" name={pid} checked={answer.text === option} disabled={busy} onChange={() => change(part.id,{ text:option })}/>{option}</label>)}</div>
       : part.kind === 'versions' ? <div id={pid} tabIndex={-1} role="group" aria-labelledby={`title-${pid}`} aria-describedby={`hint-${pid}`} className="choices">{data.submissions.filter(s => s.owner_id === data.me.id && !s.spec.parts.some((p: { kind?: string }) => p.kind === 'versions')).map(s => <label className="choice" key={s.id}><input type="checkbox" checked={chosen.includes(s.id)} disabled={busy} onChange={e => change(part.id,{ submissions: e.target.checked ? [...chosen,s.id] : chosen.filter(id => id !== s.id) })}/><span>{s.spec.title} · Version {s.number} <span className="muted small">{date(s.submitted_at)}</span></span><Badge status={shown(s.spec, s.status)}/></label>)}{!data.submissions.some(s => s.owner_id === data.me.id && !s.spec.parts.some((p: { kind?: string }) => p.kind === 'versions')) && <p className="muted small">You have no submitted versions yet. Submit your homework first.</p>}</div>
       : part.kind !== 'images' ? <textarea id={pid} aria-describedby={`hint-${pid}`} aria-invalid={fields.includes(part.id)} value={answer.text} onChange={e => change(part.id,{ text:e.target.value })} disabled={busy} rows={6} placeholder="Write here, or attach a document below…"/> : <div id={pid} tabIndex={-1}>{answer.images.map((image,index) => <div className="image-answer" key={image.fileId}><strong>{files.find(f => f.id === image.fileId)?.name || `Image ${index+1}`}</strong><label htmlFor={`prompt-${image.fileId}`}>Final prompt</label><textarea id={`prompt-${image.fileId}`} value={image.prompt} disabled={busy} onChange={e => change(part.id,{ images:answer.images.map((i,n) => n === index ? {...i,prompt:e.target.value} : i) })}/><label htmlFor={`caption-${image.fileId}`}>Explanation</label><textarea id={`caption-${image.fileId}`} value={image.caption} disabled={busy} onChange={e => change(part.id,{ images:answer.images.map((i,n) => n === index ? {...i,caption:e.target.value} : i) })}/><button className="text-button" disabled={busy} onClick={() => change(part.id,{ images:answer.images.filter(i => i.fileId !== image.fileId) })}>Remove image</button></div>)}</div>}
-      <ul className="file-list">{answer.files.map(id => <li key={id}><a href={`/api/v1/files/${id}/download`}>{files.find(f => f.id === id)?.name || 'Attachment'}</a><button className="text-button" disabled={busy} onClick={() => change(part.id,{ files:answer.files.filter(f => f!==id) })}>Remove</button></li>)}</ul>
+      <ul className="file-list">{answer.files.map(id => <li key={id}><a href={apiUrl(`files/${id}/download`)}>{files.find(f => f.id === id)?.name || 'Attachment'}</a><button className="text-button" disabled={busy} onClick={() => change(part.id,{ files:answer.files.filter(f => f!==id) })}>Remove</button></li>)}</ul>
       {part.kind !== 'choice' && part.kind !== 'versions' && <label className="upload-label">{uploading ? 'Uploading…' : part.kind === 'images' ? 'Add image' : 'Attach a file'}<input type="file" accept={part.kind === 'images' ? '.png,.jpg,.jpeg,.webp' : '.pdf,.docx,.pptx,.xlsx,.csv,.txt,.md,.png,.jpg,.jpeg,.webp'} disabled={busy || uploading} onChange={e => { const file = e.target.files?.[0]; if(file) void upload(part.id,file); e.target.value=''; }}/></label>}
       {fields.includes(part.id) && <p className="field-error">{part.kind === 'images' ? 'Add 3–6 different images, each with a prompt and explanation.' : part.kind === 'choice' ? 'Choose one option.' : part.kind === 'versions' ? 'Choose at least one of your submitted versions.' : 'Add meaningful text or a document for this part.'}</p>}
     </section>; })}
@@ -275,7 +323,7 @@ function Feedback({ data, submissions }: { data: Data; submissions: Row[] }) {
 }
 function SubmissionContent({ submission, data }: { submission: Row; data: Data }) {
   const payload = submission.payload as Payload; const spec = submission.spec as AssignmentSpec; const files = data.files; const project = submission.project_snapshot;
-  return <div className="submitted-content">{project && (project.theme || project.audience) && <p className="small muted">Project at submission: {project.theme || '—'} · {project.audience || '—'}</p>}{spec.parts.map(part => { const answer = { ...empty(), ...payload.parts[part.id] }; return <section key={part.id}><h4>{part.title}</h4><p className="preserve">{answer.text}</p>{answer.submissions.map(id => { const item = data.submissions.find(s => s.id === id); return <details className="package-item" key={id}><summary>{item ? `${item.spec.title} · Version ${item.number}` : 'Selected version'}</summary>{item ? <SubmissionContent submission={item} data={data}/> : <p className="muted small">This version is not available to you.</p>}</details>; })}{answer.files.map(id => <p key={id}><a href={`/api/v1/files/${id}/download`}>{files.find(f => f.id === id)?.name || 'Download attachment'}</a></p>)}{answer.images.map(image => <div key={image.fileId}><a href={`/api/v1/files/${image.fileId}/download`}>{files.find(f => f.id === image.fileId)?.name || 'Download image'}</a><p className="preserve"><strong>Prompt:</strong> {image.prompt}</p><p className="preserve"><strong>Explanation:</strong> {image.caption}</p></div>)}</section>; })}</div>;
+  return <div className="submitted-content">{project && (project.theme || project.audience) && <p className="small muted">Project at submission: {project.theme || '—'} · {project.audience || '—'}</p>}{spec.parts.map(part => { const answer = { ...empty(), ...payload.parts[part.id] }; return <section key={part.id}><h4>{part.title}</h4><p className="preserve">{answer.text}</p>{answer.submissions.map(id => { const item = data.submissions.find(s => s.id === id); return <details className="package-item" key={id}><summary>{item ? `${item.spec.title} · Version ${item.number}` : 'Selected version'}</summary>{item ? <SubmissionContent submission={item} data={data}/> : <p className="muted small">This version is not available to you.</p>}</details>; })}{answer.files.map(id => <p key={id}><a href={apiUrl(`files/${id}/download`)}>{files.find(f => f.id === id)?.name || 'Download attachment'}</a></p>)}{answer.images.map(image => <div key={image.fileId}><a href={apiUrl(`files/${image.fileId}/download`)}>{files.find(f => f.id === image.fileId)?.name || 'Download image'}</a><p className="preserve"><strong>Prompt:</strong> {image.prompt}</p><p className="preserve"><strong>Explanation:</strong> {image.caption}</p></div>)}</section>; })}</div>;
 }
 function History({ data, submissions, onReview }: { data: Data; submissions: Row[]; onReview?: (id: string) => void }) {
   const lastReviewed = submissions.find(s => data.reviews.some(r => r.submission_id === s.id));
@@ -421,9 +469,9 @@ function LessonVideo({ fileId, captionId, title, studied }: { fileId: string; ca
   useEffect(() => { if (video.current?.textTracks[0]) video.current.textTracks[0].mode = captionsOn ? 'showing' : 'disabled'; }, [captionsOn, captionId]);
   return <div className="lesson-player">
     <div className={`lesson-video-wrap ${covered ? 'is-studied' : ''}`}>
-      <video ref={video} className="lesson-video" style={{ height: `calc(100cqw / ${frameRatio} + 64px)` }} onLoadedMetadata={event => { const v = event.currentTarget; if (v.videoWidth && v.videoHeight) setFrameRatio(v.videoWidth / v.videoHeight); }} controls={!covered} playsInline preload="metadata" aria-label={title} aria-hidden={covered} tabIndex={covered ? -1 : undefined} src={`/api/v1/files/${fileId}/play`}>
-        {captionId && <track kind="captions" src={`/api/v1/files/${captionId}/captions`} srcLang="en" label="English"/>}
-        Your browser cannot play this video. <a href={`/api/v1/files/${fileId}/download`}>Download it here</a>.
+      <video ref={video} className="lesson-video" style={{ height: `calc(100cqw / ${frameRatio} + 64px)` }} onLoadedMetadata={event => { const v = event.currentTarget; if (v.videoWidth && v.videoHeight) setFrameRatio(v.videoWidth / v.videoHeight); }} controls={!covered} playsInline preload="metadata" aria-label={title} aria-hidden={covered} tabIndex={covered ? -1 : undefined} src={apiUrl(`files/${fileId}/play`)}>
+        {captionId && <track kind="captions" src={apiUrl(`files/${captionId}/captions`)} srcLang="en" label="English"/>}
+        Your browser cannot play this video. <a href={apiUrl(`files/${fileId}/download`)}>Download it here</a>.
       </video>
       {covered && <div className="lesson-watched-cover"><span>Studied</span><button type="button" onClick={() => setReplaying(true)}>Watch again</button></div>}
     </div>
@@ -438,7 +486,7 @@ function MaterialBody({ material, data, studied = false }: { material: Row; data
   const attachments = files.filter(f => !videos.includes(f) && f !== captions);
   return <>{material.body && <p className="preserve">{material.body}</p>}
     {videos.map(f => <LessonVideo key={f.file_id} fileId={f.file_id} captionId={captions?.file_id} title={material.title} studied={studied}/>)}
-    {(material.links?.length > 0 || attachments.length > 0) && <ul className="material-links">{material.links?.map((l: { label: string; url: string }) => <li key={l.url}><a href={l.url} target="_blank" rel="noopener noreferrer">{l.label} ↗</a></li>)}{attachments.map(f => <li key={f.file_id}><a href={`/api/v1/files/${f.file_id}/download`}>{data.files.find(x => x.id === f.file_id)?.name || 'Download file'}</a></li>)}</ul>}</>;
+    {(material.links?.length > 0 || attachments.length > 0) && <ul className="material-links">{material.links?.map((l: { label: string; url: string }) => <li key={l.url}><a href={l.url} target="_blank" rel="noopener noreferrer">{l.label} ↗</a></li>)}{attachments.map(f => <li key={f.file_id}><a href={apiUrl(`files/${f.file_id}/download`)}>{data.files.find(x => x.id === f.file_id)?.name || 'Download file'}</a></li>)}</ul>}</>;
 }
 
 // LMS-02/LMS-10: закрытый материал показывает только название и время открытия; отметка «изучено» не связана с ДЗ.
@@ -519,7 +567,7 @@ function MaterialEditor({ material, module, data, refresh, onAuth, onDirty }: { 
     <label htmlFor={`m-title-${key}`}>Title</label><input id={`m-title-${key}`} value={title} onChange={e => { setTitle(e.target.value); touch(); }} required/>
     <label htmlFor={`m-body-${key}`}>Text</label><textarea id={`m-body-${key}`} value={body} onChange={e => { setBody(e.target.value); touch(); }} rows={5}/>
     <label htmlFor={`m-links-${key}`}>Links, one per line: Title | https://…</label><textarea id={`m-links-${key}`} value={links} onChange={e => { setLinks(e.target.value); touch(); }} rows={2}/>
-    <ul className="file-list">{files.map(f => <li key={f}><a href={`/api/v1/files/${f}/download`}>{names[f] || data.files.find(x => x.id === f)?.name || 'File'}</a><button type="button" className="text-button" onClick={() => { setFiles(files.filter(x => x !== f)); touch(); }}>Remove</button></li>)}</ul>
+    <ul className="file-list">{files.map(f => <li key={f}><a href={apiUrl(`files/${f}/download`)}>{names[f] || data.files.find(x => x.id === f)?.name || 'File'}</a><button type="button" className="text-button" onClick={() => { setFiles(files.filter(x => x !== f)); touch(); }}>Remove</button></li>)}</ul>
     <label className="upload-label">{uploading ? 'Uploading…' : 'Attach a file or video captions'}<input type="file" accept=".pdf,.docx,.pptx,.xlsx,.csv,.txt,.md,.png,.jpg,.jpeg,.webp,.mp4,.vtt" disabled={uploading} onChange={async e => { const file = e.target.files?.[0]; e.target.value = ''; if (!file) return; setUploading(true); setUploadError(''); try { const form = new FormData(); form.set('file', file); const stored = await api('uploads', form); setFiles(old => [...old, stored.id]); setNames(old => ({ ...old, [stored.id]: stored.name })); touch(); } catch(err) { setUploadError((err as Error).message); } finally { setUploading(false); } }}/></label><ErrorBox error={uploadError}/>
     <div className="field-row"><div><label htmlFor={`m-aud-${key}`}>Audience</label><select id={`m-aud-${key}`} value={audience} onChange={e => { setAudience(e.target.value); touch(); }}><option value="participant">Participants</option><option value="team">Team only (host script, expert notes)</option></select></div><div><label htmlFor={`m-pos-${key}`}>Order</label><input id={`m-pos-${key}`} type="number" min={0} max={999} value={position} onChange={e => { setPosition(e.target.value); touch(); }}/></div></div>
     <div className="field-row"><div><label htmlFor={`m-open-${key}`}>Opens (CET, optional)</label><input id={`m-open-${key}`} type="datetime-local" value={opens} onChange={e => { setOpens(e.target.value); touch(); }}/></div><div><label className="choice publish"><input type="checkbox" checked={published} onChange={e => { setPublished(e.target.checked); touch(); }}/>Published</label></div></div>
@@ -606,14 +654,14 @@ function PresentationNotice({ data }: { data: Data }) {
 }
 
 // LMS-11: уведомления в интерфейсе повторяют письма; ссылка ведёт к модулю или кабинету команды.
-function Notifications({ data, refresh, onAuth }: { data: Data; refresh: () => Promise<void>; onAuth: () => void }) {
+function Notifications({ data, refresh, onAuth, readOnly = false }: { data: Data; refresh: () => Promise<void>; onAuth: () => void; readOnly?: boolean }) {
   const [open,setOpen] = useState(false); const [error,setError] = useState('');
-  const mine = data.notifications.filter(n => n.recipient_id === data.me.id && !['cancelled','missed'].includes(n.status)).slice(0, 30);
+  const mine = (data.notifications || []).filter(n => n.recipient_id === data.me.id && !['cancelled','missed'].includes(n.status));
   const unread = mine.filter(n => !n.read_at);
-  async function read(ids: string[]) { if (!ids.length) return; setError(''); try { await cmd('notification.read', { ids }); await refresh(); } catch(e) { setError((e as Error).message); if ((e as RequestError).code === 'unauthenticated') onAuth(); } }
+  async function read(ids: string[]) { if (readOnly || !ids.length) return; setError(''); try { await cmd('notification.read', { ids }); await refresh(); } catch(e) { setError((e as Error).message); if ((e as RequestError).code === 'unauthenticated') onAuth(); } }
   return <div className="notifications"><button className="secondary small-button" aria-expanded={open} aria-controls="notification-panel" onClick={() => setOpen(!open)}>Notifications{unread.length > 0 && <span className="count">{unread.length}</span>}</button>
-    {open && <section id="notification-panel" className="notification-panel" aria-label="Notifications"><div className="section-heading"><h2>Notifications</h2>{unread.length > 0 && <button className="text-button" onClick={() => read(unread.map(n => n.id))}>Mark all as read</button>}</div><ErrorBox error={error}/>
-      {mine.length ? <ul>{mine.map(n => <li key={n.id} className={n.read_at ? '' : 'unread'}><a href={n.link_path} onClick={() => { if (!n.read_at) void cmd('notification.read', { ids: [n.id] }).catch(() => {}); }}>{n.subject}</a><small>{date(n.created_at)}</small>{!n.read_at && <button className="text-button" onClick={() => read([n.id])}>Mark as read</button>}</li>)}</ul> : <p className="muted small">No notifications yet.</p>}
+    {open && <section id="notification-panel" className="notification-panel" aria-label="Notifications"><div className="section-heading"><h2>Notifications</h2>{unread.length > 0 && <button className="text-button" disabled={readOnly} onClick={() => read(unread.map(n => n.id))}>Mark all as read</button>}</div><ErrorBox error={error}/>
+      {mine.length ? <ul>{mine.map(n => <li key={n.id} className={n.read_at ? '' : 'unread'}><a href={studentPreviewUrl(n.link_path, currentSearch())} onClick={() => { if (!readOnly && !n.read_at) void cmd('notification.read', { ids: [n.id] }).catch(() => {}); }}>{n.subject}</a><small>{date(n.created_at)}</small>{!n.read_at && <button className="text-button" disabled={readOnly} onClick={() => read([n.id])}>Mark as read</button>}</li>)}</ul> : <p className="muted small">No notifications yet.</p>}
       <p className="small muted">Time zone for emails: Account.</p></section>}</div>;
 }
 function TimeZone({ data, refresh, onAuth }: { data: Data; refresh: () => Promise<void>; onAuth: () => void }) {
@@ -629,8 +677,9 @@ function TimeZone({ data, refresh, onAuth }: { data: Data; refresh: () => Promis
 const mailStatuses: Record<string, string> = { pending: 'Queued', sending: 'Sending', sent: 'Accepted by provider', failed: 'Failed', unknown: 'Unknown result', cancelled: 'Cancelled', missed: 'Missed' };
 function MailAdmin({ data, refresh, onAuth }: { data: Data; refresh: () => Promise<void>; onAuth: () => void }) {
   const [status,setStatus] = useState(''); const [run,setRun] = useState(''); const save = useSave(refresh, onAuth);
-  const rows = data.notifications.filter(n => !status || n.status === status);
-  const counts = Object.keys(mailStatuses).map(k => [k, data.notifications.filter(n => n.status === k).length] as const).filter(([, c]) => c);
+  const email = (data.notifications || []).filter(n => n.channel !== 'in_app');
+  const rows = email.filter(n => !status || n.status === status);
+  const counts = Object.keys(mailStatuses).map(k => [k, email.filter(n => n.status === k).length] as const).filter(([, c]) => c);
   const person = (id: string) => data.people.find(p => p.id === id);
   return <><div className="page-heading"><p className="eyebrow">ADMINISTRATION</p><h1>Email</h1><p className="muted">Course emails and reminders. “Accepted by provider” does not mean the email reached the inbox.</p></div>
     <section className="admin-card"><p><strong>Provider:</strong> {data.mail?.provider === 'local' ? 'Local test mailbox — emails are written to files on this computer, nothing is sent.' : data.mail?.provider ? data.mail.provider : 'Not configured — emails stay queued until a provider is set up.'}</p>
@@ -675,7 +724,7 @@ function AccountConsent({ refresh, onAuth }: { refresh: () => Promise<void>; onA
 function PasswordForm({ refresh, onAuth, done, submitLabel }: { refresh: () => Promise<void>; onAuth: () => void; done?: () => void; submitLabel: string }) {
   const [password,setPassword] = useState(''); const [repeat,setRepeat] = useState(''); const [shown,setShown] = useState(false);
   const [local,setLocal] = useState(''); const [busy,setBusy] = useState(false);
-  return <form onSubmit={async e => { e.preventDefault(); if (busy) return; setLocal(''); if (password !== repeat) { setLocal('The passwords do not match.'); return; } setBusy(true); let r: Response; try { r = await fetch('/api/v1/auth/password', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) }); } catch { setBusy(false); setLocal('Connection lost. Your password was not saved; try again.'); return; } const body = await r.json().catch(() => ({})); setBusy(false); if (!r.ok) { if (body.code === 'unauthenticated') onAuth(); setLocal(body.message || 'The password could not be saved.'); return; } setPassword(''); setRepeat(''); setLocal(''); await refresh(); done?.(); }}>
+  return <form onSubmit={async e => { e.preventDefault(); if (busy) return; setLocal(''); if (password !== repeat) { setLocal('The passwords do not match.'); return; } setBusy(true); let r: Response; try { r = await fetch(apiUrl('auth/password'), { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) }); } catch { setBusy(false); setLocal('Connection lost. Your password was not saved; try again.'); return; } const body = await r.json().catch(() => ({})); setBusy(false); if (!r.ok) { if (body.code === 'unauthenticated') onAuth(); setLocal(body.message || 'The password could not be saved.'); return; } setPassword(''); setRepeat(''); setLocal(''); await refresh(); done?.(); }}>
     <label htmlFor="new-password">New password</label><input id="new-password" type={shown ? 'text' : 'password'} autoComplete="new-password" minLength={8} maxLength={72} value={password} onChange={e => setPassword(e.target.value)} required aria-describedby="password-rules"/>
     <p id="password-rules" className="muted small">At least 8 characters. A short phrase is easier to remember than random symbols.</p>
     <label htmlFor="repeat-password">Repeat the password</label><input id="repeat-password" type={shown ? 'text' : 'password'} autoComplete="new-password" value={repeat} onChange={e => setRepeat(e.target.value)} required/>
@@ -696,16 +745,16 @@ function AccountPanel({ data, refresh, onAuth }: { data: Data; refresh: () => Pr
 }
 
 // Отзыв о курсе в любой момент: видят автор и администраторы.
-function FeedbackForm({ data, module, refresh, onAuth }: { data: Data; module: number | null; refresh: () => Promise<void>; onAuth: () => void }) {
+function FeedbackForm({ data, module, refresh, onAuth, requiredModule = false }: { data: Data; module: number | null; refresh: () => Promise<void>; onAuth: () => void; requiredModule?: boolean }) {
   const [about,setAbout] = useState<string>(module === null ? '' : String(module)); const [rating,setRating] = useState(''); const [body,setBody] = useState(''); const [sent,setSent] = useState(false); const key = useRef(''); const save = useSave(refresh, onAuth);
   const mine = data.feedback.filter(f => f.owner_id === data.me.id);
   if (sent) return <div><p role="status"><strong>Thank you.</strong> The course team will read your feedback.</p><button className="secondary" onClick={() => { setSent(false); setBody(''); setRating(''); }}>Write more</button></div>;
   return <form onSubmit={async e => { e.preventDefault(); key.current ||= crypto.randomUUID(); if (await save.run('feedback.send', { module: about === '' ? null : Number(about), rating: rating ? Number(rating) : null, body, key: key.current }, 'Sent')) { key.current = ''; setSent(true); } }}>
     <p className="muted small">Tell us what works and what does not, at any time. The course team sees your name; other participants do not see your feedback.</p>
-    <label htmlFor="feedback-about">About</label><select id="feedback-about" value={about} onChange={e => { setAbout(e.target.value); key.current = ''; }}><option value="">The course in general</option>{modules.map((name, index) => <option key={name} value={index}>Module {index} · {name}</option>)}</select>
+    <label htmlFor="feedback-about">About</label><select id="feedback-about" disabled={requiredModule} value={about} onChange={e => { setAbout(e.target.value); key.current = ''; }}><option value="">The course in general</option>{modules.map((name, index) => <option key={name} value={index}>Module {index} · {name}</option>)}</select>
     <fieldset><legend>How is it going? (optional)</legend><div className="rating">{[1,2,3,4,5].map(n => <label className="choice" key={n}><input type="radio" name="feedback-rating" checked={rating === String(n)} onChange={() => { setRating(String(n)); key.current = ''; }}/>{n}</label>)}<button type="button" className="text-button" style={{ visibility: rating ? 'visible' : 'hidden' }} onClick={() => setRating('')}>Clear</button></div><p className="muted small">1 — not good, 5 — very good.</p></fieldset>
     <label htmlFor="feedback-body">Your feedback</label><textarea id="feedback-body" value={body} onChange={e => { setBody(e.target.value); key.current = ''; }} rows={5} required/>
-    <button disabled={save.busy}>{save.busy ? 'Sending…' : 'Send feedback'}</button><ErrorBox error={save.error}/>
+    <button disabled={save.busy}>{save.busy ? 'Sending…' : requiredModule ? 'Send feedback and continue' : 'Send feedback'}</button><ErrorBox error={save.error}/>
     {mine.length > 0 && <p className="muted small">You have sent feedback {mine.length} {mine.length === 1 ? 'time' : 'times'}, last on {date(mine[0].created_at)}.</p>}
   </form>;
 }
