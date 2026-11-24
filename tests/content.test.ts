@@ -28,6 +28,9 @@ test('Module 0 video opens only after publication and only for an active partici
   const open = await playVideo(learner, file.id);
   assert.equal(open.file.mime, 'video/mp4');
   assert.deepEqual(open.bytes, mp4);
+  await assert.rejects(downloadFile(learner, file.id), (error: any) => error.code === 'video_download_disabled' && error.status === 403);
+  await assert.rejects(downloadFile(reviewer, file.id), (error: any) => error.code === 'video_download_disabled' && error.status === 403);
+  assert.deepEqual((await downloadFile(admin, file.id)).bytes, mp4, 'administrator keeps access to the original video');
   assert.ok((await readWorkspace(learner)).materialFiles.some((f: { file_id: string }) => f.file_id === file.id));
   await command(admin, 'material.save', { ...input, expectedRevision: draft.revision + 1, published: false });
   await assert.rejects(playVideo(learner, file.id), /not available/);

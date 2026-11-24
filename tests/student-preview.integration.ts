@@ -56,6 +56,27 @@ try {
   const opened = await download(preview,admin);
   assert.equal(opened.status, 200);
   assert.equal(await opened.text(), 'Synthetic preview attachment');
+  // Видео доступно для просмотра, но обычный download закрыт и участнику, и его предпросмотру.
+  const mp4 = Buffer.from('000000106674797069736f6d00000000000000086d6f6f76000000086d646174', 'hex');
+  const videoForm = new FormData(); videoForm.set('file', new File([mp4], 'preview-video.mp4', { type: 'video/mp4' }));
+  const videoUpload = await fetch(`${origin}/api/v1/uploads`, { method: 'POST', headers: { Origin: origin, Cookie: admin.cookie }, body: videoForm });
+  assert.equal(videoUpload.status, 201);
+  const video = await videoUpload.json();
+  assert.equal((await call('commands', { action: 'material.save', input: { id: randomUUID(), expectedRevision: 0, module: 0, position: 99, audience: 'participant', title: 'Streaming policy QA', body: '', links: [], published: true, opensAt: null, files: [video.id] } }, admin)).status, 200);
+  for (const [suffix, jar] of [['', student], [preview, admin]] as const) {
+    const denied = await call(`files/${video.id}/download${suffix}`, undefined, jar);
+    assert.equal(denied.status, 403);
+    assert.equal(denied.body.code, 'video_download_disabled');
+    assert.equal((await call(`files/${video.id}/captions${suffix}`, undefined, jar)).status, 403, 'captions endpoint cannot download an MP4');
+    const stream = await fetch(`${origin}/api/v1/files/${video.id}/play${suffix}`, { headers: { Cookie: jar.cookie, Range: 'bytes=0-15' } });
+    assert.equal(stream.status, 206);
+    assert.equal(stream.headers.get('content-disposition'), null, 'playback is not an attachment download');
+    assert.deepEqual(Buffer.from(await stream.arrayBuffer()), mp4.subarray(0, 16));
+  }
+  const adminVideo = await fetch(`${origin}/api/v1/files/${video.id}/download`, { headers: { Cookie: admin.cookie } });
+  assert.equal(adminVideo.status, 200);
+  assert.match(adminVideo.headers.get('content-disposition') || '', /^attachment;/);
+  assert.deepEqual(Buffer.from(await adminVideo.arrayBuffer()), mp4);
   assert.equal((await call(`workspace${preview}`, undefined, student)).status, 403, 'participant cannot preview another account');
   const [before] = await db`select (select count(*) from lms.feedback)::int as feedback,(select count(*) from lms.outbox)::int as events,(select count(read_at) from lms.notifications where recipient_id=${id})::int as read`;
   for (const path of ['commands','uploads','auth/password','auth/early-commencement','auth/logout','auth/link']) {
@@ -69,5 +90,5 @@ try {
   await db`delete from lms.module_feedback_prompts where module=2`;
   assert.equal((await call('commands',{action:'enrollment.revoke',input:{id}},admin)).status,200);
   assert.equal((await call(`workspace${preview}`,undefined,admin)).status,404);
-  console.log('Student preview HTTP passed: exact workspace, consent/password gates, real notifications, feedback request, private files, administrator identity, access restrictions and no mutations.');
+  console.log('Student preview HTTP passed: exact workspace, consent/password gates, notifications, feedback, private files, streaming-only participant videos, administrator identity, access restrictions and no mutations.');
 } finally { await db.end(); }
