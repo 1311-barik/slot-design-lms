@@ -13,6 +13,15 @@ test('composite homework requires both named parts, including meaningful text', 
   assert.throws(() => validateSubmission(spec,payload,[]),/Complete/,'a link alone is not a completed part');
 });
 
+test('homework 2.2 accepts a secure document link without extra filler text', () => {
+  const spec = assignmentSpecs.find(s => s.title.startsWith('2.2'))!;
+  assert.deepEqual(spec.parts.map(p => p.id), ['homework']);
+  const payload: Payload = { parts: { homework: { text: 'https://drive.google.com/file/d/example/view', files: [], images: [] } } };
+  assert.doesNotThrow(() => validateSubmission(spec, payload, []));
+  payload.parts.homework.text = 'http://example.test/work';
+  assert.throws(() => validateSubmission(spec, payload, []), /Complete/);
+});
+
 test('visual homework requires 3–6 different image files with prompts and explanations',()=>{
   const spec={title:'2.2',parts:[{id:'visuals',title:'Visuals',hint:'',required:true,kind:'images' as const}]};
   const files=[1,2,3].map(n=>({id:`30000000-0000-4000-8000-00000000000${n}`,mime:'image/png',size:100}));

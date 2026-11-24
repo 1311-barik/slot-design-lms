@@ -15,7 +15,7 @@ export const payloadSchema = z.object({
 }).strict();
 export type Payload = z.infer<typeof payloadSchema>;
 // choice — выбор одного варианта из options (уровень самооценки); versions — собственные отправленные версии для итогового пакета.
-export type Part = { id: string; title: string; hint: string; kind?: 'images' | 'choice' | 'versions'; options?: string[]; required: boolean };
+export type Part = { id: string; title: string; hint: string; kind?: 'images' | 'choice' | 'versions'; options?: string[]; required: boolean; allowLinkOnly?: boolean };
 // self_assessment — сдача «получено» без экспертного решения (LMS-05).
 export type AssignmentSpec = { title: string; mode?: 'self_assessment'; parts: Part[] };
 export type FileMeta = { id: string; mime: string; size: number };
@@ -39,7 +39,7 @@ export function validateSubmission(spec: AssignmentSpec, payload: Payload, files
       if ((part.required || answer?.text) && !part.options?.includes(answer?.text ?? '')) invalid.push(part.id);
     } else if (part.kind === 'versions') {
       if ((part.required && !answer?.submissions?.length) || (ownSubmissions && answer?.submissions?.some(id => !ownSubmissions.includes(id)))) invalid.push(part.id);
-    } else if (part.required && (!answer || (!substantive(answer.text) && !answer.files.some(id => files.find(f => f.id === id && !f.mime.startsWith('image/')))))) invalid.push(part.id);
+    } else if (part.required && (!answer || (!substantive(answer.text) && !(part.allowLinkOnly && /^https:\/\/\S+$/i.test(answer.text.trim())) && !answer.files.some(id => files.find(f => f.id === id && !f.mime.startsWith('image/')))))) invalid.push(part.id);
   }
   if (invalid.length) throw new AppError('incomplete', 'Complete the highlighted parts before submitting.', 422, invalid);
   if (files.length > 20 || files.reduce((sum, file) => sum + file.size, 0) > 200_000_000) throw new AppError('file_limit', 'Use at most 20 files and 200 MB per submission.');

@@ -94,7 +94,7 @@ async function fromOutbox(event: Row, crowd: Awaited<ReturnType<typeof people>>)
       // Поздно приглашённый получает ближайшие события в приглашении, без пачки пропущенных напоминаний.
       const [next] = await sql`select * from lms.sessions where starts_at>now() order by starts_at limit 1`;
       const closing = new Date(owner.access_ends_at).getTime() - Date.now() < 7 * DAY;
-      return [{ key: key(owner), kind: 'enrollment.invited', recipient: owner, link: '/?module=0', subject: 'Welcome to Slot Design — your course access', body: `${greet(owner)}Welcome to Slot Design. Your course access is ready.\n\nOpen your personal sign-in link:\n{{SIGN_IN_LINK}}\n\n${owner.password_set_at ? 'Choose “Continue to course” to open the LMS. Your existing password still works; you do not need to register again.' : 'Choose “Continue to course”, create your password, and Module 0 will open with seven introductory videos and English subtitles. Next time, sign in with your email and password.'}\n\nThis personal link has no time limit while your course access is active and can be used again. Keep it private and do not forward it.${next ? `\n\nFirst live session: ${next.title}, ${when(next.starts_at, owner.timezone)}. You will get reminders 24 hours and 1 hour before each session, and 24 hours before each homework deadline if you have not submitted yet.` : ''}\n\nYour access ends on ${when(owner.access_ends_at, owner.timezone)}.${closing ? ' That is less than seven days from now.' : ''}` }];
+      return [{ key: key(owner), kind: 'enrollment.invited', recipient: owner, link: '/?module=0', subject: 'Welcome to Slot Design — your course access', body: `${greet(owner)}Welcome to Slot Design. Your course access is ready.\n\nOpen your personal sign-in link:\n{{SIGN_IN_LINK}}\n\n${owner.password_set_at ? 'Choose “Continue to course” to open the LMS. Your existing password still works; you do not need to register again.' : 'Choose “Continue to course”, create your password, and Module 0 will open with seven introductory videos and English subtitles. Next time, sign in with your email and password.'}\n\nThis personal link has no time limit while your course access is active and can be used again. Keep it private and do not forward it.${next ? `\n\nFirst live session: ${next.title}, ${when(next.starts_at, owner.timezone)}. You will get reminders 24 hours and 1 hour before each session. Homework reminders appear in the LMS at 12:00 CET on Fridays for work not yet submitted.` : ''}\n\nYour access ends on ${when(owner.access_ends_at, owner.timezone)}.${closing ? ' That is less than seven days from now.' : ''}` }];
     }
     case 'session.changed': {
       const [x] = await sql`select * from lms.sessions where id=${event.payload.sessionId}`; if (!x) return [];
@@ -118,14 +118,8 @@ async function scheduled(now: Date, crowd: Awaited<ReturnType<typeof people>>): 
       key: `session.reminder:${x.id}:${version}:${offset / HOUR}h:${who.id}`, kind: 'session.reminder', link: moduleLink(x.module), refId: x.id, refVersion: version,
       subject: `${label}: ${x.title}`, body: `${greet(who)}${x.title} starts ${when(starts, who.timezone)}.${x.join_url ? `\n\nJoin: ${x.join_url}\nThe joining link is shared by the whole cohort.` : '\n\nThe joining link will be in the LMS.'}` });
   }
-  for (const a of await sql`select * from lms.assignments where published and due_at>${now} and (opens_at is null or opens_at<=${now})`) {
-    const due = new Date(a.due_at); const version = due.toISOString();
-    // Только тем, у кого нет ни одной отправленной версии; доработка с Needs revision серию не создаёт.
-    const done = new Set((await sql`select distinct s.owner_id from lms.submissions s join lms.works w on w.id=s.work_id where w.assignment_id=${a.id}`).map(r => r.owner_id));
-    for (const who of crowd.participants.filter(p => !done.has(p.id))) window(new Date(due.getTime() - DAY), due, who, {
-      key: `deadline.reminder:${a.id}:${version}:${who.id}`, kind: 'deadline.reminder', link: moduleLink(a.module), refId: a.id, refVersion: version,
-      subject: `Due in 24 hours: ${a.spec.title}`, body: `${greet(who)}${a.spec.title} is due ${when(due, who.timezone)}. You have not submitted a version yet. Your saved draft stays private until you submit.` });
-  }
+  // Еженедельные напоминания о ДЗ отправляет отдельный пятничный таймер только внутри LMS.
+  // Не создаём дублирующее письмо за 24 часа до срока.
   for (const who of crowd.participants) {
     const ends = new Date(who.access_ends_at);
     window(new Date(ends.getTime() - 7 * DAY), ends, who, { key: `access.closing:${who.id}:${ends.toISOString()}`, kind: 'access.closing', link: '/?module=project', refId: who.id, refVersion: ends.toISOString(),
@@ -169,12 +163,7 @@ async function stillValid(n: Row, now: Date): Promise<string | null> {
     const [x] = await sql`select starts_at from lms.sessions where id=${n.ref_id}`;
     if (!x || new Date(x.starts_at).toISOString() !== n.ref_version) return 'The session was moved; a new reminder replaces this one.';
   }
-  if (n.kind === 'deadline.reminder') {
-    const [a] = await sql`select due_at,published from lms.assignments where id=${n.ref_id}`;
-    if (!a || !a.published || !a.due_at || new Date(a.due_at).toISOString() !== n.ref_version) return 'The deadline changed or the assignment was unpublished.';
-    const [sent] = await sql`select 1 from lms.submissions s join lms.works w on w.id=s.work_id where w.assignment_id=${n.ref_id} and s.owner_id=${n.recipient_id} limit 1`;
-    if (sent) return 'The participant has already submitted.';
-  }
+  if (n.kind === 'deadline.reminder') return 'Deadline reminders are now sent in the LMS on Friday.';
   if (n.kind === 'access.closing' && new Date(who.access_ends_at).toISOString() !== n.ref_version) return 'The access end date changed.';
   return null;
 }

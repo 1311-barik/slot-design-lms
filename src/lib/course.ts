@@ -11,12 +11,8 @@ const homework: AssignmentSpec[] = [
     { id: 'analysis', title: 'A. Analyse an existing game', required: true, hint: 'Cover the mechanic, player experience, mathematical model and theme. Finish with a synthesis of how they work together.' },
     { id: 'concept', title: 'B. Draft your own concept', required: true, hint: 'Describe the theme, audience, core mechanic, hook feature and proposed volatility. Keep this separate from the existing game analysis.' },
   ] },
-  { title: '2.2 · Develop a visual direction', parts: [
-    { id: 'context', title: 'A. Context & definition of done', required: true, hint: 'Share your context pack and the criteria you will use to choose a direction.' },
-    { id: 'variants', title: 'B. Explore & choose', required: true, hint: 'Show at least eight variants, stress-test two, choose one and explain why you rejected three. Your expert reviews the reasoning.' },
-    { id: 'visuals', title: 'C. Final images', kind: 'images', required: true, hint: 'Upload 3–6 images. Add the final prompt and an explanation to each image.' },
-    { id: 'journal', title: 'AI journal', required: true, hint: 'Paste your process journal or attach a document. AI tools are used outside this LMS.' },
-    { id: 'application', title: 'Next week', required: true, hint: 'In one sentence, describe how you will apply this technique next week.' },
+  { title: '2.2 · Your concept and AI experiments', parts: [
+    { id: 'homework', title: 'Submit your homework', required: true, allowLinkOnly: true, hint: 'Paste a full https:// link to your document or attach a file. Include your updated pitch, one visual AI experiment, one gameplay AI experiment, the prompts you used, what worked or failed, and what you kept or changed and why. A complete slot is not required.' },
   ] },
   { title: '3.2 · Session curve & ethics check', parts: [
     { id: 'curve', title: 'A. Session curve', required: true, hint: 'Describe the session curve of your concept: near-misses and their frequency, the reward rhythm, how the player leaves and what brings them back. Attach a diagram or image if you have one.' },
