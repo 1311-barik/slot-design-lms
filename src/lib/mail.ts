@@ -137,6 +137,7 @@ async function store(plan: Plan, now: Date) {
 }
 
 export async function plan(now = new Date()) {
+  await sql`select lms.schedule_module_feedback()`;
   const crowd = await people(); let created = 0;
   // Каждое событие outbox обрабатывается один раз; повтор не дублирует письма благодаря dedupe_key.
   for (;;) {
@@ -156,6 +157,7 @@ export async function plan(now = new Date()) {
 
 // Повторная проверка перед отправкой: доступ активен, событие не прошло, время/срок не менялись, сдачи нет.
 async function stillValid(n: Row, now: Date): Promise<string | null> {
+  if (n.channel === 'in_app') return 'This notification is only delivered inside the LMS.';
   const [who] = await sql`select * from lms.profiles where id=${n.recipient_id}`;
   if (!who || who.revoked_at || new Date(who.access_ends_at) <= now) return 'Recipient no longer has access.';
   if (n.not_after && new Date(n.not_after) <= now) return 'The event has already started or passed.';

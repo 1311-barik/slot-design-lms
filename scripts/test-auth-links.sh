@@ -22,3 +22,4 @@ for ((i=0;i<30;i++)); do
 done
 QA_ORIGIN="$APP_ORIGIN" node --import tsx tests/persistent-links.integration.ts
 QA_ORIGIN="$APP_ORIGIN" node --import tsx tests/early-commencement.integration.ts
+QA_ORIGIN="$APP_ORIGIN" node --import tsx tests/student-preview.integration.ts
