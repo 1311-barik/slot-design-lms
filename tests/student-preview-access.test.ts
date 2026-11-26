@@ -1,7 +1,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { studentPreviewTarget } from '../src/lib/student-preview-service';
+import { expertPreviewTarget, studentPreviewTarget } from '../src/lib/student-preview-service';
 import { command, readWorkspace } from '../src/lib/service';
 import { sql } from '../src/lib/db';
 
@@ -22,6 +22,28 @@ test('only active administrators can select an active participant; staff and rev
   const revoked = randomUUID();
   await sql`insert into lms.profiles(id,name,email,role,activated_at,revoked_at,access_ends_at) values(${revoked},'Preview revoked',${revoked + '@example.test'},'participant',now(),now(),now()+interval '1 year')`;
   await assert.rejects(studentPreviewTarget(admin, revoked), /active course access/);
+});
+
+test('only administrators can preview active experts without changing their real role or assignments', async () => {
+  await assert.rejects(expertPreviewTarget(learner, reviewer), /administrators only/);
+  await assert.rejects(expertPreviewTarget(reviewer, reviewer), /administrators only/);
+  await assert.rejects(expertPreviewTarget(admin, learner), /active course access/);
+  await assert.rejects(expertPreviewTarget(admin, admin), /active course access/);
+  const target = await expertPreviewTarget(admin, reviewer);
+  assert.equal(target.kind, 'expert');
+  assert.equal(target.administratorId, admin);
+  assert.equal(target.expertId, reviewer);
+  assert.ok(target.experts.every(p => p.id !== admin && p.id !== learner));
+  const revoked = randomUUID();
+  await sql`insert into lms.profiles(id,name,email,role,activated_at,revoked_at,access_ends_at) values(${revoked},'Revoked expert',${revoked+'@example.test'},'reviewer',now(),now(),now()+interval '1 year')`;
+  await assert.rejects(expertPreviewTarget(admin, revoked), /active course access/);
+  const before = await sql`select * from lms.reviewers order by assignment_id,reviewer_id`;
+  const workspace = await readWorkspace(target.expertId, { scheduleNotifications: false });
+  assert.equal(workspace.me.role, 'reviewer');
+  assert.equal(workspace.drafts.length, 0, 'student drafts stay private');
+  assert.equal(workspace.people.some((p: any) => p.id !== reviewer && p.email), false, 'expert cannot see other emails');
+  assert.deepEqual(await sql`select * from lms.reviewers order by assignment_id,reviewer_id`, before);
+  assert.equal((await readWorkspace(admin, { scheduleNotifications: false })).me.role, 'admin');
 });
 
 test('preview reads the same student data, feedback gate and notifications without creating or reading notifications', async () => {

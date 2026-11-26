@@ -42,6 +42,7 @@ docs/*
 !docs/BACKUP-RESTORE.md
 !docs/architecture.md
 !docs/module-feedback.md
+!docs/video-access.md
 !docs/ONBOARDING.md
 !docs/agents/
 !docs/deployment/
