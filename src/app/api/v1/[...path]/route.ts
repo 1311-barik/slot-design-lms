@@ -9,7 +9,7 @@ import { config } from '@/lib/config';
 import { downloadFile, playVideo, uploadFile } from '@/lib/files';
 import { sql } from '@/lib/db';
 import { earlyCommencement } from '@/lib/early-commencement';
-import { studentPreviewTarget } from '@/lib/student-preview-service';
+import { expertPreviewTarget, studentPreviewTarget } from '@/lib/student-preview-service';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 type Context = { params: Promise<{ path: string[] }> };
@@ -43,13 +43,13 @@ async function handle(request: Request, context: Context) {
   if (request.method === 'POST' && request.headers.get('origin') !== cfg.origin) throw new AppError('origin', 'Refresh this page before trying again.', 403);
   const path = (await context.params).path.join('/');
   const params = new URL(request.url).searchParams;
-  const preview = params.get('preview') === 'student';
-  if (preview && request.method !== 'GET') throw new AppError('preview_read_only', 'Student preview is read-only. Return to your own account to make changes.', 403);
+  const preview = ['student', 'expert'].includes(params.get('preview') || '');
+  if (preview && request.method !== 'GET') throw new AppError('preview_read_only', 'Preview is read-only. Return to your own account to make changes.', 403);
   if (request.method === 'GET') {
     if (path === 'config') return response({ local: cfg.mode === 'local' });
     const authenticated = await actor();
-    const previewContext = preview ? await studentPreviewTarget(authenticated, params.get('student')) : null;
-    const user = previewContext?.participantId || authenticated;
+    const previewContext = params.get('preview') === 'expert' ? await expertPreviewTarget(authenticated, params.get('expert')) : preview ? await studentPreviewTarget(authenticated, params.get('student')) : null;
+    const user = previewContext ? ('expertId' in previewContext ? previewContext.expertId : previewContext.participantId) : authenticated;
     const profile = await setupState(user);
     if (path === 'workspace') {
       const data = profile.role === 'participant' && (!profile.password_set_at || !profile.consent_recorded)

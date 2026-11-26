@@ -25,6 +25,26 @@ async function login(email: string) {
 }
 try {
   const admin = await login('admin@example.test');
+  const expert = await login('expert@example.test');
+  const expertWorkspace = (await call('workspace', undefined, expert)).body;
+  const expertPreview = `?preview=expert&expert=${expertWorkspace.me.id}`;
+  const expertView = await call('workspace'+expertPreview, undefined, admin);
+  assert.equal(expertView.status, 200);
+  for (const key of Object.keys(expertWorkspace)) if (key !== 'now') assert.deepEqual(expertView.body[key], expertWorkspace[key], 'expert '+key);
+  assert.equal(expertView.body.preview.administratorId, '10000000-0000-4000-8000-000000000004');
+  assert.equal(expertView.body.preview.kind, 'expert');
+  assert.equal(expertView.body.drafts.length, 0);
+  assert.equal((await call('workspace'+expertPreview, undefined, expert)).status, 403);
+  assert.equal((await call('workspace?preview=expert&expert=10000000-0000-4000-8000-000000000001', undefined, admin)).status, 404);
+  const [expertBefore] = await db`select (select count(*) from lms.review_claims)::int as claims,(select count(*) from lms.review_drafts)::int as drafts,(select count(*) from lms.reviews)::int as reviews,(select count(*) from lms.answers)::int as answers,(select count(*) from lms.outbox)::int as events,(select count(read_at) from lms.notifications)::int as receipts`;
+  for (const path of ['commands','uploads','auth/password','auth/logout','auth/link']) {
+    const denied = await call(path+expertPreview, { action: 'submission.claim', input: { submissionId: randomUUID() } }, admin);
+    assert.equal(denied.status, 403, 'expert '+path);
+    assert.equal(denied.body.code, 'preview_read_only');
+  }
+  const [expertAfter] = await db`select (select count(*) from lms.review_claims)::int as claims,(select count(*) from lms.review_drafts)::int as drafts,(select count(*) from lms.reviews)::int as reviews,(select count(*) from lms.answers)::int as answers,(select count(*) from lms.outbox)::int as events,(select count(read_at) from lms.notifications)::int as receipts`;
+  assert.deepEqual(expertAfter, expertBefore, 'expert preview never mutates course data');
+  assert.equal((await call('workspace', undefined, admin)).body.me.role, 'admin');
   const id = randomUUID(), email = `${id}@example.test`;
   assert.equal((await call('commands', { action: 'enrollment.invite', input: { id, name: 'Student Preview HTTP QA', email, accessEndsAt: new Date(Date.now() + 86400000).toISOString() } }, admin)).status, 200);
   const student = await login(email);
